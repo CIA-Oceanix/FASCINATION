@@ -9,7 +9,7 @@ from collections import namedtuple
 
 TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
 
-class IncompleteScanConfiguration(Exception):
+class IncompleteScanConfiguration(Exception):       #peut-être demande à quentin ou daniel de faire un point sur ce code pour mieux le comprendre et savoir quoi en faire
     pass
 
 class DangerousDimOrdering(Exception):

@@ -15,7 +15,8 @@ Created on Tue Apr  4 10:28:35 2023
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.functional as F
+import pytorch_lightning as pl
 
 padding_mode = 'reflect'
 
@@ -37,9 +38,9 @@ class DoubleConv(nn.Module):
             mid_channels = out_channels
             
         self.double_conv = nn.Sequential(
-                nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False,padding_mode=padding_mode),
+                nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=1, bias=False, padding_mode=padding_mode),
                 ModifiedReLU(),
-                nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False,padding_mode=padding_mode),
+                nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=1, bias=False, padding_mode=padding_mode),
                 ModifiedReLU()
             )
 
@@ -70,27 +71,28 @@ class OutConv(nn.Module):
         return self.conv(x)
 
     
-class UNet(nn.Module):
-    def __init__(self, n_channels, n_var, bilinear=False):
+class UNet(pl.LightningModule):
+    def __init__(self, n_channels, n_var, time_steps=2, bilinear=False):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.n_var = n_var
         self.bilinear = bilinear
+        self.time_steps = time_steps
 
         self.inc = DoubleConv(n_channels, 32)
         self.down1 = nn.Sequential(
             nn.AvgPool2d(kernel_size=2),
-            DoubleConv(64, 64)
+            DoubleConv(32, 64)
         )
         self.down2 = nn.Sequential(
             nn.AvgPool2d(kernel_size=2),
-            DoubleConv(128, 64)
+            DoubleConv(64, 128, 64)
         )
         self.up1 = Up(64, 64)
-        self.doubleconv1 = DoubleConv(64, 32)
+        self.doubleconv1 = DoubleConv(128, 64, 32)
         self.up2 = Up(32, 32)
-        self.doubleconv2 = DoubleConv(32, 32)
-        self.outc = OutConv(32, n_var)
+        self.doubleconv2 = DoubleConv(64, 32)
+        self.outc = OutConv(32, n_var*time_steps)
 
     def forward(self, x):
         x = self.inc(x)
@@ -106,3 +108,38 @@ class UNet(nn.Module):
         out = self.outc(x)
         
         return out
+    
+    def configure_optimizers(self):         #vérifier les dimensions de nos données, ça va dépendre de comment je les charge dans le dataloader
+        optimizer = torch.optim.Adam(self.parameters, lr=1e-3)
+        return optimizer
+
+    def training_step(self, batch, batch_idx, seq_len):
+        #assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
+        x, y = batch
+        loss = 0
+        for i in range(seq_len):
+            y_hat = self(x[i])
+            loss += nn.MSELoss()(y_hat, y[i])
+        loss /= seq_len
+        self.log('train_loss', loss)
+        return loss
+
+    def validation_step(self, batch, batch_idx, seq_len):
+        #assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
+        x, y = batch
+        loss = 0
+        for i in range(seq_len):
+            y_hat = self(x[i])
+            loss += nn.MSELoss()(y_hat, y[i])
+        loss /= seq_len
+        self.log('val_loss', loss)
+
+    def test_step(self, batch, batch_idx, seq_len): # rajouter l'ACC et éventuellement les métriques spectrales de hugo
+        #assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
+        x, y = batch
+        loss = 0
+        for i in range(seq_len):
+            y_hat = self(x[i])
+            loss += torch.sqrt(nn.MSELoss()(y_hat, y[i]))
+        loss /= seq_len
+        self.log('test loss', loss)
