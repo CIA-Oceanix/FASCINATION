@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 import torch.functional as F
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 padding_mode = 'reflect'
 
@@ -72,12 +73,14 @@ class OutConv(nn.Module):
 
     
 class UNet(pl.LightningModule):
-    def __init__(self, n_channels, n_var, time_steps=2, bilinear=False):
+    def __init__(self, n_channels, n_var, io_time_steps=2, integration_steps=2, loss_by_step=1, bilinear=False):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.n_var = n_var
+        self.io_time_steps = io_time_steps
+        self.integration_steps = integration_steps
+        self.loss_by_step = loss_by_step
         self.bilinear = bilinear
-        self.time_steps = time_steps
 
         self.inc = DoubleConv(n_channels, 32)
         self.down1 = nn.Sequential(
@@ -92,13 +95,14 @@ class UNet(pl.LightningModule):
         self.doubleconv1 = DoubleConv(128, 64, 32)
         self.up2 = Up(32, 32)
         self.doubleconv2 = DoubleConv(64, 32)
-        self.outc = OutConv(32, n_var*time_steps)
+        self.outc = OutConv(32, n_var*io_time_steps)
 
     def forward(self, x):
+        # down
         x = self.inc(x)
         x1= self.down1(x)
         x2 = self.down2(x1)
-
+        # up
         x = self.up1(x2)
         x = torch.cat([x, x2], dim = 1)
         x = self.doubleconv1(x)
@@ -109,37 +113,52 @@ class UNet(pl.LightningModule):
         
         return out
     
-    def configure_optimizers(self):         #vérifier les dimensions de nos données, ça va dépendre de comment je les charge dans le dataloader
+    def configure_optimizers(self):
+
         optimizer = torch.optim.Adam(self.parameters, lr=1e-3)
+
         return optimizer
 
-    def training_step(self, batch, batch_idx, seq_len):
-        #assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
+    def training_step(self, batch, batch_idx):
+        # assuming x = x(t-delta_t) + x(t), and y = [truth(t+delta_t) + truth(t+2*delta_t), truth(t+3*delta_t) + truth(t+4*delta_t)]
         x, y = batch
-        loss = 0
-        for i in range(seq_len):
-            y_hat = self(x[i])
-            loss += nn.MSELoss()(y_hat, y[i])
-        loss /= seq_len
+        outputs = [self(x)]
+        loss = self.loss_by_step*nn.MSELoss()(outputs[0], y[0])
+        for i in range(1, self.integration_steps):
+            x0 = outputs[i-1]
+            outputs.append(self(x0))
+            loss += self.loss_by_step*nn.MSELoss()(outputs[i], y[i])
+        loss /= self.integration_steps
         self.log('train_loss', loss)
+
         return loss
 
-    def validation_step(self, batch, batch_idx, seq_len):
-        #assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
+    def validation_step(self, batch, batch_idx):
+        # assuming x = x(t-delta_t) + x(t), and y = [truth(t+delta_t) + truth(t+2*delta_t), truth(t+3*delta_t) + truth(t+4*delta_t)]
         x, y = batch
-        loss = 0
-        for i in range(seq_len):
-            y_hat = self(x[i])
-            loss += nn.MSELoss()(y_hat, y[i])
-        loss /= seq_len
-        self.log('val_loss', loss)
+        outputs = [self(x)]
+        loss = self.loss_by_step*nn.MSELoss()(outputs[0], y[0])
+        for i in range(1, self.integration_steps):
+            x0 = outputs[i-1]
+            outputs.append(self(x0))
+            loss += self.loss_by_step*nn.MSELoss()(outputs[i], y[i])
+        loss /= self.integration_steps
+        self.log('validation_loss', loss)
 
-    def test_step(self, batch, batch_idx, seq_len): # rajouter l'ACC et éventuellement les métriques spectrales de hugo
-        #assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
+        return loss
+
+    def test_step(self, batch, test_steps, batch_idx): # rajouter l'ACC et éventuellement les métriques spectrales de hugo
+        # assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
+        # test_steps = 1 by default, ie checking for metrics over the next 2 time steps (1 forward pass in the network)
         x, y = batch
-        loss = 0
-        for i in range(seq_len):
-            y_hat = self(x[i])
-            loss += torch.sqrt(nn.MSELoss()(y_hat, y[i]))
-        loss /= seq_len
-        self.log('test loss', loss)
+        outputs = [self(x)]
+        RMSE = []
+        if test_steps > 1:
+            for i in range(1, test_steps): 
+                x0 = outputs[i-1]
+                outputs.append(self(x0))
+        for (output, truth) in enumerate(zip(outputs, y)):
+            RMSE.append(torch.sqrt(nn.MSELoss(output, truth)))
+        self.log('RMSE', RMSE)
+
+        return [RMSE]
