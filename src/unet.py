@@ -73,16 +73,15 @@ class OutConv(nn.Module):
 
     
 class UNet(pl.LightningModule):
-    def __init__(self, n_channels, n_var, io_time_steps=2, integration_steps=2, loss_by_step=1, bilinear=False):
+    def __init__(self, n_var, io_time_steps=2, integration_steps=2, loss_by_step=1, bilinear=False):
         super(UNet, self).__init__()
-        self.n_channels = n_channels
         self.n_var = n_var
         self.io_time_steps = io_time_steps
         self.integration_steps = integration_steps
         self.loss_by_step = loss_by_step
         self.bilinear = bilinear
 
-        self.inc = DoubleConv(n_channels, 32)
+        self.inc = DoubleConv(n_var*io_time_steps, 32)
         self.down1 = nn.Sequential(
             nn.AvgPool2d(kernel_size=2),
             DoubleConv(32, 64)
@@ -121,6 +120,7 @@ class UNet(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         # assuming x = x(t-delta_t) + x(t), and y = [truth(t+delta_t) + truth(t+2*delta_t), truth(t+3*delta_t) + truth(t+4*delta_t)]
+        # calculating loss on integration_steps forward passes to force stability of auto-regressive process
         x, y = batch
         outputs = [self(x)]
         loss = self.loss_by_step*nn.MSELoss()(outputs[0], y[0])
@@ -143,7 +143,7 @@ class UNet(pl.LightningModule):
             outputs.append(self(x0))
             loss += self.loss_by_step*nn.MSELoss()(outputs[i], y[i])
         loss /= self.integration_steps
-        self.log('validation_loss', loss)
+        self.log('val_loss', loss)
 
         return loss
 
@@ -162,3 +162,4 @@ class UNet(pl.LightningModule):
         self.log('RMSE', RMSE)
 
         return [RMSE]
+

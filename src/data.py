@@ -9,7 +9,44 @@ from collections import namedtuple
 
 TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
 
-class IncompleteScanConfiguration(Exception):       #peut-être demande à quentin ou daniel de faire un point sur ce code pour mieux le comprendre et savoir quoi en faire
+class UNetDataModule(pl.LightningDataModule):
+    def __init__(self, input_da, domains, dl_kw):
+        self.input_da = input_da
+        self.domains = domains
+        self.dl_kw = dl_kw
+        self.mean, self.std = None, None
+    
+    def calc_mean_std(self):
+        train_data = self.input_da.sel(time=slice(self.domains['train']))
+        self.mean = [[0,0],[0,0]]
+        self.std = [[0,0],[0,0]]
+        for i in range(len(train_data)):
+            for k in range(len(train_data[i])):
+                self.mean[i][k] = train_data[i][k].mean().values.item()
+                self.std[i][k] = train_data[i][k].std().values.item()
+
+    def norm_stats(self, data):
+        for i in range (len(data)):
+            for k in range(len(data[i])):
+                data[i][k] = (data[i][k] - self.mean[i][k])/self.std[i][k]
+        return data
+    
+    def train_dataloader(self):
+        train_data = self.input_da.sel(time=slice(self.domains['train']))
+        train_data = self.norm_stats(train_data)
+        train_dataset = MyDataset(train_data)
+        return DataLoader(train_dataset, **self.dl_kw)
+    
+    def val_dataloader(self) -> EVAL_DATALOADERS:
+        return super().val_dataloader()
+    
+    def test_dataloader(self) -> EVAL_DATALOADERS:
+        return super().test_dataloader()
+    
+class UNetDataset(torch.utils.data.Dataset):
+    pass
+
+class IncompleteScanConfiguration(Exception):
     pass
 
 class DangerousDimOrdering(Exception):
@@ -210,7 +247,7 @@ class AugmentedDataset(torch.utils.data.Dataset):
 
 
 class BaseDataModule(pl.LightningDataModule):
-    def __init__(self, input_da, domains, xrds_kw, dl_kw, aug_only=False, aug_factor=2, norm_stats=None):
+    def __init__(self, input_da, domains, xrds_kw, dl_kw, aug_only=False, aug_factor=0, norm_stats=None):
         super().__init__()
         self.input_da = input_da
         self.domains = domains
@@ -231,7 +268,7 @@ class BaseDataModule(pl.LightningDataModule):
         return self._norm_stats
 
     def train_mean_std(self):
-        train_data = self.input_da.sel(self.xrds_kw.get('domain_limits', {})).sel(self.domains['train'])
+        train_data = self.input_da.sel(self.domains['train'])
         return train_data.sel(variable='tgt').pipe(lambda da: (da.mean().values.item(), da.std().values.item()))
 
     def setup(self, stage='test'):
