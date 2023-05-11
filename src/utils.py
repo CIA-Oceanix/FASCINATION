@@ -100,6 +100,9 @@ def load_data(path1 , path2):
     d1 = xr.open_dataset(path1)
     d2 = xr.open_dataset(path2)
 
+    d1 = d1.sel(lat=slice(32,44), lon=slice(-66,-53)) # gulf stream zone
+    d2 = d2.sel(lat=slice(32,44), lon=slice(-66,-53))
+
     if ('time' in d1.variables) and ('time' in d2.variables):
         d1['time'] = (xr.DataArray((pd.to_datetime(d1.time, unit='s') + pd.DateOffset(years=43)),
                             dims=['time']))
@@ -113,10 +116,12 @@ def load_data(path1 , path2):
     for el in tmp_array:
         el = remove_nan(el).transpose("time", "lat", "lon")
 
+    if len(tmp_array['time'])%2 != 0:
+        tmp_array = tmp_array.isel(time=slice(None, -1))
+
     return (
         xr.Dataset({'input': tmp_array.isel(time=np.arange(0, len(tmp_array['time'])-4)), 'tgt': tmp_array.isel(time=np.arange(2, len(tmp_array['time'])))})
         [[*src.data.TrainingItem._fields]]
-        .to_array()
     ) 
 
 def load_altimetry_data(path):

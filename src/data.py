@@ -14,37 +14,47 @@ class UNetDataModule(pl.LightningDataModule):
         self.input_da = input_da
         self.domains = domains
         self.dl_kw = dl_kw
-        self.mean, self.std = None, None
     
-    def calc_mean_std(self):
+    def setup(self):
         train_data = self.input_da.sel(time=slice(self.domains['train']))
-        self.mean = [[0,0],[0,0]]
-        self.std = [[0,0],[0,0]]
-        for i in range(len(train_data)):
-            for k in range(len(train_data[i])):
-                self.mean[i][k] = train_data[i][k].mean().values.item()
-                self.std[i][k] = train_data[i][k].std().values.item()
+        for var in self.input_da.data_vars:
+            mean, std = self.norm_stats(train_data[var])
+            for i in range(len(self.input_da[var])):
+                self.input_da[var][i] = (self.input_da[var][i] - mean[i])/std[i]
+                self.input_da[var] = self.input_da[var].transpose('time', 'var', 'lat', 'lon')
 
-    def norm_stats(self, data):
-        for i in range (len(data)):
-            for k in range(len(data[i])):
-                data[i][k] = (data[i][k] - self.mean[i][k])/self.std[i][k]
-        return data
+    def norm_stats(dataset):
+        mean = []
+        std = []
+        for i in range(len(dataset)):
+            mean.append(dataset[i].mean().values.item())
+            std.append(dataset[i].std().values.item())
+        return mean, std
     
     def train_dataloader(self):
         train_data = self.input_da.sel(time=slice(self.domains['train']))
-        train_data = self.norm_stats(train_data)
-        train_dataset = MyDataset(train_data)
-        return DataLoader(train_dataset, **self.dl_kw)
+        return torch.utils.data.DataLoader(train_data, shuffle=False, **self.dl_kw)
     
-    def val_dataloader(self) -> EVAL_DATALOADERS:
-        return super().val_dataloader()
+    def val_dataloader(self):
+        val_data = self.input_da.sel(time=slice(self.domains['val']))
+        return torch.utils.data.DataLoader(val_data, shuffle=False, **self.dl_kw)
     
-    def test_dataloader(self) -> EVAL_DATALOADERS:
-        return super().test_dataloader()
-    
+    def test_dataloader(self):
+        test_data = self.input_da.sel(time=slice(self.domains['test']))
+        return torch.utils.data.DataLoader(test_data, shuffle=False, **self.dl_kw)
+
 class UNetDataset(torch.utils.data.Dataset):
-    pass
+    def __init__(self, da, io_time_steps=2):
+        super().__init__()
+        self.da = da
+        self.io_time_steps = io_time_steps
+
+    def __len__(self):
+        return len(self.da.time) - self.io_time_steps*3 + 1
+    
+    def __getitem__(self, index):
+        item = [self.da.input[index:index+2], self.da.tgt[index+2:index+6]]
+        return TrainingItem._make(item)
 
 class IncompleteScanConfiguration(Exception):
     pass
