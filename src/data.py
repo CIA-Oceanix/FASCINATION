@@ -10,10 +10,15 @@ from collections import namedtuple
 TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
 
 class UNetDataModule(pl.LightningDataModule):
-    def __init__(self, input_da, domains, dl_kw):
+    def __init__(self, input_da, domains, dl_kw, io_time_steps):
         self.input_da = input_da
         self.domains = domains
         self.dl_kw = dl_kw
+        self.io_time_steps = io_time_steps
+
+        self.train_ds = None
+        self.val_ds = None
+        self.test_ds = None
     
     def setup(self):
         train_data = self.input_da.sel(time=slice(self.domains['train']))
@@ -22,6 +27,15 @@ class UNetDataModule(pl.LightningDataModule):
             for i in range(len(self.input_da[var])):
                 self.input_da[var][i] = (self.input_da[var][i] - mean[i])/std[i]
                 self.input_da[var] = self.input_da[var].transpose('time', 'var', 'lat', 'lon')
+        self.train_ds = UNetDataset(
+            self.input_da.sel(time=slice(self.domains['train'])), self.io_time_steps
+        )
+        self.val_ds = UNetDataset(
+            self.input_da.sel(time=slice(self.domains['val'])), self.io_time_steps
+        )
+        self.test_ds = UNetDataset(
+            self.input_da.sel(time=slice(self.domains['test'])), self.io_time_steps
+        )
 
     def norm_stats(dataset):
         mean = []
@@ -32,16 +46,13 @@ class UNetDataModule(pl.LightningDataModule):
         return mean, std
     
     def train_dataloader(self):
-        train_data = self.input_da.sel(time=slice(self.domains['train']))
-        return torch.utils.data.DataLoader(train_data, shuffle=False, **self.dl_kw)
+        return torch.utils.data.DataLoader(self.train_ds, shuffle=False **self.dl_kw)
     
     def val_dataloader(self):
-        val_data = self.input_da.sel(time=slice(self.domains['val']))
-        return torch.utils.data.DataLoader(val_data, shuffle=False, **self.dl_kw)
+        return torch.utils.data.DataLoader(self.val_ds, shuffle=False, **self.dl_kw)
     
     def test_dataloader(self):
-        test_data = self.input_da.sel(time=slice(self.domains['test']))
-        return torch.utils.data.DataLoader(test_data, shuffle=False, **self.dl_kw)
+        return torch.utils.data.DataLoader(self.test_ds, shuffle=False, **self.dl_kw)
 
 class UNetDataset(torch.utils.data.Dataset):
     def __init__(self, da, io_time_steps=2):
@@ -50,9 +61,10 @@ class UNetDataset(torch.utils.data.Dataset):
         self.io_time_steps = io_time_steps
 
     def __len__(self):
-        return len(self.da.time) - self.io_time_steps*3 + 1
+        return (len(self.da.time) - self.io_time_steps*3)//2
     
     def __getitem__(self, index):
+        index *= 2
         item = [self.da.input[index:index+2], self.da.tgt[index+2:index+6]]
         return TrainingItem._make(item)
 

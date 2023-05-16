@@ -8,7 +8,7 @@ Created on Tue Apr  4 10:28:35 2023
 """ U-Net model from Weyn, Jonathan A., Dale R. Durran, and Rich Caruana. "Improving data‐driven global weather prediction using deep convolutional neural networks on a cubed sphere." 
     Journal of Advances in Modeling Earth Systems 12.9 (2020): e2020MS002109.
 
-    This is a pytorch recreation of the model used in their paper, dedicated to the prediction of oceanography related variables.
+    This is a pytorch implementation of the model described in their paper, dedicated to the prediction of oceanography related variables.
     Each Conv2D layer except the last one is followed by a LeakyReLU10 (LeakyReLU capped at 10). No Dropout, no BatchNorm layers, only AveragePooling2D.
     We are not applying the cubed sphere method described in the paper.
     """
@@ -52,7 +52,7 @@ class DoubleConv(nn.Module):
 class Up(nn.Module):
     """Upscaling"""
 
-    def __init__(self, in_channels, out_channels, bilinear=True):
+    def __init__(self, in_channels, out_channels, bilinear=False):
         super().__init__()
 
         if bilinear:
@@ -73,13 +73,12 @@ class OutConv(nn.Module):
 
     
 class UNet(pl.LightningModule):
-    def __init__(self, n_var, io_time_steps=2, integration_steps=2, loss_by_step=1, bilinear=False):
+    def __init__(self, n_var, io_time_steps=2, integration_steps=2, loss_by_step=1):
         super(UNet, self).__init__()
         self.n_var = n_var
         self.io_time_steps = io_time_steps
         self.integration_steps = integration_steps
         self.loss_by_step = loss_by_step
-        self.bilinear = bilinear
 
         self.inc = DoubleConv(n_var*io_time_steps, 32)
         self.down1 = nn.Sequential(
@@ -113,9 +112,7 @@ class UNet(pl.LightningModule):
         return out
     
     def configure_optimizers(self):
-
         optimizer = torch.optim.Adam(self.parameters, lr=1e-3)
-
         return optimizer
 
     def training_step(self, batch, batch_idx):
@@ -123,12 +120,10 @@ class UNet(pl.LightningModule):
         # calculating loss on integration_steps forward passes to force stability of auto-regressive process
         x, y = batch
         outputs = [self(x)]
-        loss = self.loss_by_step*nn.MSELoss()(outputs[0], y[0])
         for i in range(1, self.integration_steps):
             x0 = outputs[i-1]
             outputs.append(self(x0))
-            loss += self.loss_by_step*nn.MSELoss()(outputs[i], y[i])
-        loss /= self.integration_steps
+        loss = nn.MSELoss()(outputs, y)/self.integration_steps
         self.log('train_loss', loss)
 
         return loss
@@ -141,8 +136,7 @@ class UNet(pl.LightningModule):
         for i in range(1, self.integration_steps):
             x0 = outputs[i-1]
             outputs.append(self(x0))
-            loss += self.loss_by_step*nn.MSELoss()(outputs[i], y[i])
-        loss /= self.integration_steps
+        loss = nn.MSELoss()(outputs, y)/self.integration_steps
         self.log('val_loss', loss)
 
         return loss
