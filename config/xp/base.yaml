@@ -1,8 +1,8 @@
 # @package _global_
 
 paths:
-    ssh: data/NATL60-CJM165_NATL_ssh_y2013.1y.nc
-    sst: data/NATL60-CJM165_NATL_sst_y2013.1y.nc
+    ssh: /DATASET/NATL/NATL60-CJM165_NATL_ssh_y2013.1y.nc
+    sst: /DATASET/NATL/NATL60-CJM165_NATL_sst_y2013.1y.nc
 
 trainer:
   _target_: pytorch_lightning.Trainer
