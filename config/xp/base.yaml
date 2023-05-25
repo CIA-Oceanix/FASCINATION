@@ -26,10 +26,11 @@ trainer:
 
 datamodule:
   _target_: src.data.UNetDataModule
+  io_time_steps: 2
   input_da: 
     _target_: src.utils.load_data
-    path1: ${ssh}
-    path2: ${sst}
+    path1: ${paths.ssh}
+    path2: ${paths.sst}
   domains:
     train:
       time: {_target_: builtins.slice, _args_: ['2013-01-01', '2013-09-12']}
@@ -37,7 +38,7 @@ datamodule:
       time: {_target_: builtins.slice, _args_: ['2013-09-13', '2013-11-24']}
     test: 
       time: {_target_: builtins.slice,  _args_: ['2013-11-25', '2013-12-30']}
-  dl_kw: {batch_size: 1, num_workers: 1}
+  dl_kw: {batch_size: 4, num_workers: 1}
 
 model:
   _target_: src.unet.UNet
