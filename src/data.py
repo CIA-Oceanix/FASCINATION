@@ -11,6 +11,7 @@ TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
 
 class UNetDataModule(pl.LightningDataModule):
     def __init__(self, input_da, domains, dl_kw, io_time_steps):
+        super().__init__()
         self.input_da = input_da
         self.domains = domains
         self.dl_kw = dl_kw
@@ -20,24 +21,24 @@ class UNetDataModule(pl.LightningDataModule):
         self.val_ds = None
         self.test_ds = None
     
-    def setup(self):
-        train_data = self.input_da.sel(time=slice(self.domains['train']))
+    def setup(self, stage='test'):
+        train_data = self.input_da.sel(self.domains['train'])
         for var in self.input_da.data_vars:
             mean, std = self.norm_stats(train_data[var])
             for i in range(len(self.input_da[var])):
                 self.input_da[var][i] = (self.input_da[var][i] - mean[i])/std[i]
                 self.input_da[var] = self.input_da[var].transpose('time', 'var', 'lat', 'lon')
         self.train_ds = UNetDataset(
-            self.input_da.sel(time=slice(self.domains['train'])), self.io_time_steps
+            self.input_da.sel(self.domains['train']), self.io_time_steps
         )
         self.val_ds = UNetDataset(
-            self.input_da.sel(time=slice(self.domains['val'])), self.io_time_steps
+            self.input_da.sel(self.domains['val']), self.io_time_steps
         )
         self.test_ds = UNetDataset(
-            self.input_da.sel(time=slice(self.domains['test'])), self.io_time_steps
+            self.input_da.sel(self.domains['test']), self.io_time_steps
         )
 
-    def norm_stats(dataset):
+    def norm_stats(self, dataset):
         mean = []
         std = []
         for i in range(len(dataset)):
@@ -65,8 +66,10 @@ class UNetDataset(torch.utils.data.Dataset):
     
     def __getitem__(self, index):
         index *= 2
-        item = [self.da.input[index:index+2], self.da.tgt[index+2:index+6]]
-        return TrainingItem._make(item)
+        item = (self.da.input[index:index+2].data.astype(np.float32), self.da.tgt[index+2:index+6].data.astype(np.float32))
+        reshaped_item = [item[0].reshape(-1, *item[0].shape[2:]),
+                     item[1].reshape(-1, *item[1].shape[2:])]
+        return TrainingItem._make(reshaped_item)
 
 class IncompleteScanConfiguration(Exception):
     pass
