@@ -87,32 +87,32 @@ class UNet(pl.LightningModule):
         )
         self.down2 = nn.Sequential(
             nn.AvgPool2d(kernel_size=2),
-            DoubleConv(64, 128, 64)
+            DoubleConv(64, 64, 128)
         )
         self.up1 = Up(64, 64)
-        self.doubleconv1 = DoubleConv(128, 64, 32)
+        self.doubleconv1 = DoubleConv(128, 32, 64)
         self.up2 = Up(32, 32)
         self.doubleconv2 = DoubleConv(64, 32)
         self.outc = OutConv(32, n_var*io_time_steps)
 
     def forward(self, x):
         # down
-        x = self.inc(x)
-        x1= self.down1(x)
+        x0 = self.inc(x)
+        x1= self.down1(x0)
         x2 = self.down2(x1)
         # up
         x = self.up1(x2)
-        x = torch.cat([x, x2], dim = 1)
+        x = torch.cat([x, x1], dim = 0)
         x = self.doubleconv1(x)
         x = self.up2(x)
-        x = torch.cat([x, x1], dim = 1)
+        x = torch.cat([x, x0], dim = 0)
         x = self.doubleconv2(x)
         out = self.outc(x)
         
         return out
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters, lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
 
     def training_step(self, batch, batch_idx):
@@ -132,7 +132,6 @@ class UNet(pl.LightningModule):
         # assuming x = x(t-delta_t) + x(t), and y = [truth(t+delta_t) + truth(t+2*delta_t), truth(t+3*delta_t) + truth(t+4*delta_t)]
         x, y = batch
         outputs = [self(x)]
-        loss = self.loss_by_step*nn.MSELoss()(outputs[0], y[0])
         for i in range(1, self.integration_steps):
             x0 = outputs[i-1]
             outputs.append(self(x0))
