@@ -68,7 +68,7 @@ class UNetDataset(torch.utils.data.Dataset):
         index *= 2
         item = (self.da.input[index:index+2].data.astype(np.float32), self.da.tgt[index+2:index+6].data.astype(np.float32))
         reshaped_item = [item[0].reshape(-1, *item[0].shape[2:]),
-                     item[1].reshape(-1, *item[1].shape[2:])]
+                     item[1]]
         return TrainingItem._make(reshaped_item)
 
 class IncompleteScanConfiguration(Exception):
