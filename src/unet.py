@@ -102,10 +102,10 @@ class UNet(pl.LightningModule):
         x2 = self.down2(x1)
         # up
         x = self.up1(x2)
-        x = torch.cat([x, x1], dim = 0)
+        x = torch.cat([x, x1], dim = 1)
         x = self.doubleconv1(x)
         x = self.up2(x)
-        x = torch.cat([x, x0], dim = 0)
+        x = torch.cat([x, x0], dim = 1)
         x = self.doubleconv2(x)
         out = self.outc(x)
         
@@ -123,6 +123,7 @@ class UNet(pl.LightningModule):
         for i in range(1, self.integration_steps):
             x0 = outputs[i-1]
             outputs.append(self(x0))
+        outputs = torch.stack(outputs).reshape(*y.shape)
         loss = nn.MSELoss()(outputs, y)/self.integration_steps
         self.log('train_loss', loss)
 
@@ -135,6 +136,7 @@ class UNet(pl.LightningModule):
         for i in range(1, self.integration_steps):
             x0 = outputs[i-1]
             outputs.append(self(x0))
+        outputs = torch.stack(outputs).reshape(*y.shape)
         loss = nn.MSELoss()(outputs, y)/self.integration_steps
         self.log('val_loss', loss)
 
