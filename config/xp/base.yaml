@@ -14,14 +14,11 @@ trainer:
     save_dir: ${hydra:runtime.output_dir}
     name: ${hydra:runtime.choices.xp}
     version: ''
-  min_epochs: 100
+  min_epochs: 0
   max_epochs: 500
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
-    - _target_: pytorch_lightning.callback.EarlyStopping:
-      monitor: val_loss
-      patience: 50 #src.early_stopping.ValidEarlyStopping
-
+    - _target_: src.early_stopping.ValidEarlyStopping
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
       monitor: val_loss
       save_top_k: 5
@@ -59,7 +56,6 @@ entrypoints:
     trainer: ${trainer}
     lit_mod: ${model}
     dm: ${datamodule}
-    test_fn: null
       # _target_: src.utils.diagnostics
       # _partial_: true
       # test_domain:
