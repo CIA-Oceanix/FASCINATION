@@ -15,7 +15,3 @@ def base_training(trainer, dm, lit_mod, test_dm=None, ckpt=None):
     best_ckpt_path = trainer.checkpoint_callback.best_model_path
     trainer.callbacks = []
     trainer.test(lit_mod, datamodule=test_dm, ckpt_path=best_ckpt_path)
-
-    print("\nBest ckpt score:")
-    print(test_fn(lit_mod).to_markdown())
-    print("\n###############")
