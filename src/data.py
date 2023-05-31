@@ -26,8 +26,9 @@ class UNetDataModule(pl.LightningDataModule):
         for var in self.input_da.data_vars:
             mean, std = self.norm_stats(train_data[var])
             for i in range(len(self.input_da[var])):
+                import pdb; pdb.set_trace()
                 self.input_da[var][i] = (self.input_da[var][i] - mean[i])/std[i]
-                self.input_da[var] = self.input_da[var].transpose('time', 'var', 'lat', 'lon')
+            self.input_da[var] = self.input_da[var].transpose('time', 'var', 'lat', 'lon')
         self.train_ds = UNetDataset(
             self.input_da.sel(self.domains['train']), self.io_time_steps
         )
