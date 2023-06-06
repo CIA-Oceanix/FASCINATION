@@ -22,8 +22,7 @@ class UNetDataModule(pl.LightningDataModule):
         self.test_ds = None
     
     def setup(self, stage):
-
-        if stage == 'train':
+        if stage == 'fit':
             train_data = self.input_da.sel(self.domains['train'])
             for var in self.input_da.data_vars:
                 mean, std = self.norm_stats(train_data[var])
@@ -36,7 +35,6 @@ class UNetDataModule(pl.LightningDataModule):
             self.val_ds = UNetDataset(
                 self.input_da.sel(self.domains['val']), self.io_time_steps
             )
-        
         if stage == 'test':
             self.test_ds = UNetDataset(
                 self.input_da.sel(self.domains['test']), self.io_time_steps
