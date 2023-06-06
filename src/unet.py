@@ -142,18 +142,16 @@ class UNet(pl.LightningModule):
 
         return loss
 
-    def test_step(self, batch, test_steps, batch_idx): # rajouter l'ACC et éventuellement les métriques spectrales de hugo
+    def test_step(self, batch, batch_idx): # rajouter l'ACC et éventuellement les métriques spectrales de hugo
         # assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
         # test_steps = 1 by default, ie checking for metrics over the next 2 time steps (1 forward pass in the network)
         x, y = batch
         outputs = [self(x)]
-        RMSE = []
-        if test_steps > 1:
-            for i in range(1, test_steps): 
-                x0 = outputs[i-1]
-                outputs.append(self(x0))
-        for (output, truth) in enumerate(zip(outputs, y)):
-            RMSE.append(torch.sqrt(nn.MSELoss(output, truth)))
+        for i in range(1, self.integration_steps):
+            x0 = outputs[i-1]
+            outputs.append(self(x0))
+        outputs = torch.stack(outputs).view(*y.shape) 
+        RMSE = torch.sqrt(nn.MSELoss()(outputs, y)/self.integration_steps)
         self.log('RMSE', RMSE, on_step= False, on_epoch=True)
 
         return [RMSE]
