@@ -20,15 +20,25 @@ class UNetDataModule(pl.LightningDataModule):
         self.train_ds = None
         self.val_ds = None
         self.test_ds = None
+
+        self.test_time = None
+        self.test_var = None
+        self.test_lat = None
+        self.test_lon = None
+
+        self.data_norm = False
     
     def setup(self, stage):
-        if stage == 'fit':
+        if not self.data_norm:
             train_data = self.input_da.sel(self.domains['train'])
             for var in self.input_da.data_vars:
                 mean, std = self.norm_stats(train_data[var])
                 for i in range(len(self.input_da[var])):
                     self.input_da[var][i] = (self.input_da[var][i] - mean[i])/std[i]
                 self.input_da[var] = self.input_da[var].transpose('time', 'var', 'lat', 'lon')
+            self.data_norm = True
+
+        if stage == 'fit':
             self.train_ds = UNetDataset(
                 self.input_da.sel(self.domains['train']), self.io_time_steps
             )
@@ -36,9 +46,16 @@ class UNetDataModule(pl.LightningDataModule):
                 self.input_da.sel(self.domains['val']), self.io_time_steps
             )
         if stage == 'test':
+            self.val_ds = UNetDataset(
+                self.input_da.sel(self.domains['val']), self.io_time_steps
+            )
             self.test_ds = UNetDataset(
                 self.input_da.sel(self.domains['test']), self.io_time_steps
             )
+            self.test_time = self.test_ds.da["time"]
+            self.test_var = self.test_ds.da["var"]
+            self.test_lat = self.test_ds.da["lat"]
+            self.test_lon = self.test_ds.da["lon"]
 
     def norm_stats(self, dataset):
         mean = []
