@@ -13,11 +13,16 @@ Created on Tue Apr  4 10:28:35 2023
     We are not applying the cubed sphere method described in the paper.
     """
 
+from typing import Any, List, Optional, Union
+from pytorch_lightning.utilities.types import EPOCH_OUTPUT, STEP_OUTPUT
 import torch
 import torch.nn as nn
 import torch.functional as F
 import pytorch_lightning as pl
+import xarray as xr
+import pandas as pd
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from src.utils import psd_based_scores, rmse_based_scores
 
 padding_mode = 'reflect'
 
@@ -80,6 +85,11 @@ class UNet(pl.LightningModule):
         self.integration_steps = integration_steps
         self.loss_by_step = loss_by_step
 
+        self.test_outputs_gt = {
+            "outputs": [],
+            "gt": []
+        }
+
         self.inc = DoubleConv(n_var*io_time_steps, 32)
         self.down1 = nn.Sequential(
             nn.AvgPool2d(kernel_size=2),
@@ -116,7 +126,6 @@ class UNet(pl.LightningModule):
         return optimizer
 
     def training_step(self, batch, batch_idx):
-        # assuming x = x(t-delta_t) + x(t), and y = [truth(t+delta_t) + truth(t+2*delta_t), truth(t+3*delta_t) + truth(t+4*delta_t)]
         # calculating loss on integration_steps forward passes to force stability of auto-regressive process
         x, y = batch
         outputs = [self(x)]
@@ -130,7 +139,6 @@ class UNet(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # assuming x = x(t-delta_t) + x(t), and y = [truth(t+delta_t) + truth(t+2*delta_t), truth(t+3*delta_t) + truth(t+4*delta_t)]
         x, y = batch
         outputs = [self(x)]
         for i in range(1, self.integration_steps):
@@ -142,9 +150,7 @@ class UNet(pl.LightningModule):
 
         return loss
 
-    def test_step(self, batch, batch_idx): # rajouter l'ACC et éventuellement les métriques spectrales de hugo
-        # assuming x = [x(t-delta_t), x(t)], and y = [y(t+delta_t), y(t+2*delta_t)]
-        # test_steps = 1 by default, ie checking for metrics over the next 2 time steps (1 forward pass in the network)
+    def test_step(self, batch, batch_idx): # ACC ?
         x, y = batch
         outputs = [self(x)]
         for i in range(1, self.integration_steps):
@@ -152,7 +158,37 @@ class UNet(pl.LightningModule):
             outputs.append(self(x0))
         outputs = torch.stack(outputs).view(*y.shape) 
         RMSE = torch.sqrt(nn.MSELoss()(outputs, y)/self.integration_steps)
-        self.log('RMSE', RMSE, on_step= False, on_epoch=True)
+        self.log('RMSE', RMSE, on_step= True, on_epoch=True)
 
-        return [RMSE]
+        return outputs
+    
+    def on_test_batch_end(self, outputs: STEP_OUTPUT | None, batch: Any, batch_idx: int, dataloader_idx: int):
+        self.test_outputs_gt["outputs"].append(outputs)
+        self.test_outputs_gt["gt"].append(batch.tgt)
+    
+    def on_test_end(self):
+        outputs_tensor = self.test_outputs_gt["outputs"].pop(0)
+        gt_tensor = self.test_outputs_gt["gt"].pop(0)
+        while len(self.test_outputs_gt["outputs"]) > 0 and len(self.test_outputs_gt["gt"]) > 0:
+            outputs_tensor = torch.cat((outputs_tensor, self.test_outputs_gt["outputs"].pop(0)), dim=0)  # il y aura peut-être une dimension de batch en plus quelque part, faire attention lors des tests
+            gt_tensor = torch.cat((gt_tensor, self.test_outputs_gt["gt"].pop(0)), dim=0)
+        dm = self.trainer.datamodule
+        time, var, lat, lon = dm.test_time, dm.test_var, dm.test_lat, dm.test_lon
+        outputs_array = xr.DataArray(outputs_tensor, coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
+        gt_array = xr.DataArray(gt_tensor, coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
+        metrics = {
+            **dict(
+            zip(
+                ["λx", "λt"],
+                psd_based_scores(outputs_array, gt_array)[1:]
+                )
+            ),
+            **dict(
+            zip(
+                ["μ", "σ"],
+                rmse_based_scores(outputs_array, gt_array)[2:],
+                )
+            ),
+        }
+        return pd.Series(metrics, name="osse_metrics")
 

@@ -21,7 +21,7 @@ trainer:
     - _target_: src.early_stopping.ValidEarlyStopping
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
       monitor: val_loss
-      save_top_k: 5
+      save_top_k: 1
       filename: '{val_loss:.2f}-{epoch:02d}'
       mode: min
 
