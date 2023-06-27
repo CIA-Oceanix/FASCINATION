@@ -134,7 +134,7 @@ class UNet(pl.LightningModule):
             outputs.append(self(x0))
         outputs = torch.stack(outputs).view(*y.shape)
         loss = nn.MSELoss()(outputs, y)/self.integration_steps
-        self.log('train_loss', loss, on_step= False, on_epoch=True)
+        self.log('train_loss', loss, on_step= True, on_epoch=True)
 
         return loss
 
@@ -146,7 +146,7 @@ class UNet(pl.LightningModule):
             outputs.append(self(x0))
         outputs = torch.stack(outputs).view(*y.shape)
         loss = nn.MSELoss()(outputs, y)/self.integration_steps
-        self.log('val_loss', loss, on_step=False, on_epoch=True)
+        self.log('val_loss', loss, on_step=True, on_epoch=True)
 
         return loss
 
