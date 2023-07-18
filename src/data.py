@@ -39,17 +39,17 @@ class UNetDataModule(pl.LightningDataModule):
             self.data_norm = True
 
         if stage == 'fit':
-            self.train_ds = UNetDataset(
+            self.train_ds = AlternateDataset(
                 self.input_da.sel(self.domains['train']), self.io_time_steps
             )
-            self.val_ds = UNetDataset(
+            self.val_ds = AlternateDataset(
                 self.input_da.sel(self.domains['val']), self.io_time_steps
             )
         if stage == 'test':
-            self.val_ds = UNetDataset(
+            self.val_ds = AlternateDataset(
                 self.input_da.sel(self.domains['val']), self.io_time_steps
             )
-            self.test_ds = UNetDataset(
+            self.test_ds = AlternateDataset(
                 self.input_da.sel(self.domains['test']), self.io_time_steps
             )
             self.test_time = self.test_ds.da["time"]
