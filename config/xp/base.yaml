@@ -39,7 +39,7 @@ datamodule:
       time: {_target_: builtins.slice, _args_: ['2013-09-13', '2013-11-24']}
     test: 
       time: {_target_: builtins.slice,  _args_: ['2013-11-25', '2013-12-30']}
-  dl_kw: {batch_size: 4, num_workers: 1}
+  dl_kw: {batch_size: 4, num_workers: 32}
 
 model:
   _target_: src.unet.UNet

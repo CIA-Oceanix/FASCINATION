@@ -81,7 +81,7 @@ class UNetDataset(torch.utils.data.Dataset):
         self.io_time_steps = io_time_steps
 
     def __len__(self):
-        return (len(self.da.time) - self.io_time_steps*3)//2
+        return (len(self.da.time) - self.io_time_steps*2)//2
     
     def __getitem__(self, index):
         index *= 2
@@ -89,6 +89,24 @@ class UNetDataset(torch.utils.data.Dataset):
         reshaped_item = [item[0].reshape(-1, *item[0].shape[2:]),
                      item[1]]
         return TrainingItem._make(reshaped_item)
+    
+class AlternateDataset(torch.utils.data.IterableDataset):
+    def __init__(self, da, io_time_steps=2):
+        super().__init__()
+        self.da = da
+        self.io_time_steps = io_time_steps
+
+    def __iter__(self):
+        index = 0
+        if index < len(self.da.time):
+            item = (self.da.input[index:index+2].data.astype(np.float32), self.da.tgt[index+2:index+6].data.astype(np.float32))
+            reshaped_item = [item[0].reshape(-1, *item[0].shape[2:]),
+                     item[1]]
+            index += 2
+            yield TrainingItem._make(reshaped_item)
+
+    def __len__(self):
+        return len(self.da.time)
 
 class IncompleteScanConfiguration(Exception):
     pass

@@ -167,15 +167,15 @@ class UNet(pl.LightningModule):
         self.test_outputs_gt["gt"].append(batch.tgt)
     
     def on_test_end(self):
-        outputs_tensor = self.test_outputs_gt["outputs"].pop(0)
-        gt_tensor = self.test_outputs_gt["gt"].pop(0)
+        outputs_tensor = self.test_outputs_gt["outputs"].pop(0).squeeze(dim=0)
+        gt_tensor = self.test_outputs_gt["gt"].pop(0).squeeze(dim=0)
         while len(self.test_outputs_gt["outputs"]) > 0 and len(self.test_outputs_gt["gt"]) > 0:
-            outputs_tensor = torch.cat((outputs_tensor, self.test_outputs_gt["outputs"].pop(0)), dim=0)  # il y aura peut-être une dimension de batch en plus quelque part, faire attention lors des tests
-            gt_tensor = torch.cat((gt_tensor, self.test_outputs_gt["gt"].pop(0)), dim=0)
+            outputs_tensor = torch.cat((outputs_tensor, self.test_outputs_gt["outputs"].pop(0).squeeze(dim=0)), dim=0)  # il y aura peut-être une dimension de batch en plus quelque part, faire attention lors des tests
+            gt_tensor = torch.cat((gt_tensor, self.test_outputs_gt["gt"].pop(0).squeeze(dim=0)), dim=0)
         dm = self.trainer.datamodule
         time, var, lat, lon = dm.test_time, dm.test_var, dm.test_lat, dm.test_lon
-        outputs_array = xr.DataArray(outputs_tensor, coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
-        gt_array = xr.DataArray(gt_tensor, coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
+        outputs_array = xr.DataArray(outputs_tensor.detach().cpu().numpy(), coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
+        gt_array = xr.DataArray(gt_tensor.detach().cpu().numpy(), coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
         metrics = {
             **dict(
             zip(
