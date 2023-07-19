@@ -163,15 +163,36 @@ class UNet(pl.LightningModule):
         return outputs
     
     def on_test_batch_end(self, outputs: STEP_OUTPUT | None, batch: Any, batch_idx: int, dataloader_idx: int):
-        self.test_outputs_gt["outputs"].append(outputs)
-        self.test_outputs_gt["gt"].append(batch.tgt)
+        self.test_outputs_gt["outputs"].append(outputs.squeeze(dim=0))
+        self.test_outputs_gt["gt"].append(batch.tgt.squeeze(dim=0))
     
     def on_test_end(self):
-        outputs_tensor = self.test_outputs_gt["outputs"].pop(0).squeeze(dim=0)
-        gt_tensor = self.test_outputs_gt["gt"].pop(0).squeeze(dim=0)
+        #inutile de faire la moyenne sur la gt vu que les valeurs sont identiques mais c'est pas quelque chose de prioritaire à corriger
+        l = len(self.test_outputs_gt["outputs"])
+        res_outputs = []
+        res_gt = []
+        for k in range (0, l, 2):
+            if k == 0:
+                res_outputs.append(torch.cat([self.test_outputs_gt["outputs"][k][0:2], torch.mean(torch.stack([self.test_outputs_gt["outputs"][k][2:4], self.test_outputs_gt["outputs"][k+1][0:2]]), dim = 0)]))
+                res_gt.append(torch.cat([self.test_outputs_gt["gt"][k][0:2], torch.mean(torch.stack([self.test_outputs_gt["gt"][k][2:4], self.test_outputs_gt["gt"][k+1][0:2]]), dim = 0)]))
+            elif k == l-1:
+                res_outputs.append(torch.cat([torch.mean(torch.stack([self.test_outputs_gt["outputs"][k-1][2:4], self.test_outputs_gt["outputs"][k][0:2]]), dim=0), self.test_outputs_gt["outputs"][k][2:4]]))
+                res_gt.append(torch.cat([torch.mean(torch.stack([self.test_outputs_gt["gt"][k-1][2:4], self.test_outputs_gt["gt"][k][0:2]]), dim=0), self.test_outputs_gt["gt"][k][2:4]]))
+            else:
+                res_outputs.append(torch.cat([torch.mean(torch.stack([self.test_outputs_gt["outputs"][k-1][2:4], self.test_outputs_gt["outputs"][k][0:2]]), dim=0), torch.mean(torch.stack([self.test_outputs_gt["outputs"][k][2:4], self.test_outputs_gt["outputs"][k+1][0:2]]), dim=0)]))
+                res_gt.append(torch.cat([torch.mean(torch.stack([self.test_outputs_gt["gt"][k-1][2:4], self.test_outputs_gt["gt"][k][0:2]]), dim=0), torch.mean(torch.stack([self.test_outputs_gt["gt"][k][2:4], self.test_outputs_gt["gt"][k+1][0:2]]), dim=0)]))
+        if l%2 == 0:
+            res_outputs.append(torch.cat([torch.mean(torch.stack([self.test_outputs_gt["outputs"][l-2][2:4], self.test_outputs_gt["outputs"][l-1][0:2]]), dim=0), self.test_outputs_gt["outputs"][l-1][2:4]]))
+            res_gt.append(torch.cat([torch.mean(torch.stack([self.test_outputs_gt["gt"][l-2][2:4], self.test_outputs_gt["gt"][l-1][0:2]]), dim=0), self.test_outputs_gt["gt"][l-1][2:4]]))
+        self.test_outputs_gt["outputs"] = res_outputs
+        self.test_outputs_gt["gt"] = res_gt
+
+        outputs_tensor = self.test_outputs_gt["outputs"].pop(0)
+        gt_tensor = self.test_outputs_gt["gt"].pop(0)
         while len(self.test_outputs_gt["outputs"]) > 0 and len(self.test_outputs_gt["gt"]) > 0:
-            outputs_tensor = torch.cat((outputs_tensor, self.test_outputs_gt["outputs"].pop(0).squeeze(dim=0)), dim=0)  # il y aura peut-être une dimension de batch en plus quelque part, faire attention lors des tests
-            gt_tensor = torch.cat((gt_tensor, self.test_outputs_gt["gt"].pop(0).squeeze(dim=0)), dim=0)
+            outputs_tensor = torch.cat((outputs_tensor, self.test_outputs_gt["outputs"].pop(0)), dim=0)
+            gt_tensor = torch.cat((gt_tensor, self.test_outputs_gt["gt"].pop(0)), dim=0)
+
         dm = self.trainer.datamodule
         time, var, lat, lon = dm.test_time, dm.test_var, dm.test_lat, dm.test_lon
         outputs_array = xr.DataArray(outputs_tensor.detach().cpu().numpy(), coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])

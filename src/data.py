@@ -98,15 +98,12 @@ class AlternateDataset(torch.utils.data.IterableDataset):
 
     def __iter__(self):
         index = 0
-        if index < len(self.da.time):
+        if index < len(self.da.time)-1:
             item = (self.da.input[index:index+2].data.astype(np.float32), self.da.tgt[index+2:index+6].data.astype(np.float32))
             reshaped_item = [item[0].reshape(-1, *item[0].shape[2:]),
                      item[1]]
             index += 2
             yield TrainingItem._make(reshaped_item)
-
-    def __len__(self):
-        return len(self.da.time)
 
 class IncompleteScanConfiguration(Exception):
     pass
