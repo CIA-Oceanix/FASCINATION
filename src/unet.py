@@ -201,15 +201,17 @@ class UNet(pl.LightningModule):
             **dict(
             zip(
                 ["λx", "λt"],
-                psd_based_scores(outputs_array, gt_array)[1:]
+                psd_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[1:]
                 )
             ),
             **dict(
             zip(
                 ["μ", "σ"],
-                rmse_based_scores(outputs_array, gt_array)[2:],
+                rmse_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[2:],
                 )
             ),
         }
-        return pd.Series(metrics, name="osse_metrics")
+        metrics_df = pd.DataFrame.from_dict(metrics)
+        print(metrics_df.to_markdown())
+        metrics_df.to_csv("metrics.csv")
 
