@@ -34,11 +34,11 @@ datamodule:
     path2: ${paths.sst}
   domains:
     train:
-      time: {_target_: builtins.slice, _args_: ['2013-01-01', '2013-09-12']}
+      time: {_target_: builtins.slice, _args_: ['2013-04-20', '2013-12-30']}
     val: 
-      time: {_target_: builtins.slice, _args_: ['2013-09-13', '2013-11-24']}
+      time: {_target_: builtins.slice, _args_: ['2013-02-06', '2013-04-19']}
     test: 
-      time: {_target_: builtins.slice,  _args_: ['2013-11-25', '2013-12-30']}
+      time: {_target_: builtins.slice,  _args_: ['2013-01-01', '2013-02-05']}
   dl_kw: {batch_size: 4, num_workers: 32}
 
 model:
@@ -47,6 +47,7 @@ model:
   io_time_steps: 2
   integration_steps: 2
   loss_by_step: 1
+  lr: 0.0001
 
 
 entrypoints:
