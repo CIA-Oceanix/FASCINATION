@@ -78,12 +78,13 @@ class OutConv(nn.Module):
 
     
 class UNet(pl.LightningModule):
-    def __init__(self, n_var, io_time_steps=2, integration_steps=2, loss_by_step=1):
+    def __init__(self, n_var, io_time_steps=2, integration_steps=2, loss_by_step=1, lr=1e-4):
         super(UNet, self).__init__()
         self.n_var = n_var
         self.io_time_steps = io_time_steps
         self.integration_steps = integration_steps
         self.loss_by_step = loss_by_step
+        self.lr = lr
 
         self.test_outputs_gt = {
             "outputs": [],
@@ -122,7 +123,7 @@ class UNet(pl.LightningModule):
         return out
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
 
     def training_step(self, batch, batch_idx):
@@ -198,20 +199,36 @@ class UNet(pl.LightningModule):
         outputs_array = xr.DataArray(outputs_tensor.detach().cpu().numpy(), coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
         gt_array = xr.DataArray(gt_tensor.detach().cpu().numpy(), coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
         metrics = {
-            **dict(
-            zip(
-                ["λx", "λt"],
-                psd_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[1:]
+            "ssh":{
+                **dict(
+                    zip(
+                        ["λx", "λt"],
+                        psd_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[1:]
+                        )
+                    ),
+                **dict(
+                zip(
+                    ["μ", "σ"],
+                    rmse_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[2:]
+                    )
                 )
-            ),
-            **dict(
-            zip(
-                ["μ", "σ"],
-                rmse_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[2:],
+                },
+            "sst":{
+                **dict(
+                zip(
+                    ["λx", "λt"],
+                    psd_based_scores(outputs_array.sel(var='sst'), gt_array.sel(var='sst'))[1:],
+                    )
+                ),
+                **dict(
+                zip(
+                    ["μ", "σ"],
+                    rmse_based_scores(outputs_array.sel(var='sst'), gt_array.sel(var='sst'))[2:],
+                    )
                 )
-            ),
+            },
         }
-        metrics_df = pd.DataFrame.from_dict(metrics)
-        print(metrics_df.to_markdown())
+        df = [pd.DataFrame(values, index=[key]) for key, values in metrics.items()]
+        metrics_df = pd.concat(df)
+        print(metrics_df)
         metrics_df.to_csv("metrics.csv")
-
