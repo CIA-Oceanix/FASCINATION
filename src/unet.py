@@ -21,6 +21,7 @@ import torch.functional as F
 import pytorch_lightning as pl
 import xarray as xr
 import pandas as pd
+import hydra
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from src.utils import psd_based_scores, rmse_based_scores
 
@@ -198,14 +199,16 @@ class UNet(pl.LightningModule):
         time, var, lat, lon = dm.test_time, dm.test_var, dm.test_lat, dm.test_lon
         outputs_array = xr.DataArray(outputs_tensor.detach().cpu().numpy(), coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
         gt_array = xr.DataArray(gt_tensor.detach().cpu().numpy(), coords=[time, var, lat, lon], dims=['time', 'var', 'lat', 'lon'])
+        outputs_array.to_netcdf(hydra.core.hydra_config.HydraConfig.get().run.dir+"/test_outputs.nc")
+        gt_array.to_netcdf(hydra.core.hydra_config.HydraConfig.get().run.dir+"/gt_outputs.nc")
         metrics = {
             "ssh":{
                 **dict(
-                    zip(
-                        ["λx", "λt"],
-                        psd_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[1:]
-                        )
-                    ),
+                zip(
+                    ["λx", "λt"],
+                    psd_based_scores(outputs_array.sel(var='ssh'), gt_array.sel(var='ssh'))[1:]
+                    )
+                ),
                 **dict(
                 zip(
                     ["μ", "σ"],
@@ -231,4 +234,4 @@ class UNet(pl.LightningModule):
         df = [pd.DataFrame(values, index=[key]) for key, values in metrics.items()]
         metrics_df = pd.concat(df)
         print(metrics_df)
-        metrics_df.to_csv("metrics.csv")
+        metrics_df.to_csv(hydra.core.hydra_config.HydraConfig.get().run.dir+"/psd_rmse.csv")
