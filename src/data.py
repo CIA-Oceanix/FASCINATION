@@ -151,10 +151,10 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
         self.da = da
 
     def __len__(self):
-        return len(self.da.time_counter)
+        return len(self.da.time)
     
     def __getitem__(self, index):
-        return self.da.sel(time_counter=index)
+        return self.da.sel(time=index)
     
 class AlternateDataset(torch.utils.data.IterableDataset):
     def __init__(self, da, io_time_steps=2):
