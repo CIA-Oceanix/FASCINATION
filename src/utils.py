@@ -122,7 +122,12 @@ def load_data(path1 , path2):
     return (
         xr.Dataset({'input': tmp_array.isel(time=np.arange(0, len(tmp_array['time'])-4)), 'tgt': tmp_array.isel(time=np.arange(2, len(tmp_array['time'])))})
         [[*src.data.TrainingItem._fields]]
-    ) 
+    )
+
+def load_sound_data(path):
+    return (
+        xr.open_dataset(path)
+    )    
 
 def load_altimetry_data(path):
     return (
