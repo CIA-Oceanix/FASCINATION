@@ -90,6 +90,72 @@ class UNetDataset(torch.utils.data.Dataset):
                      item[1]]
         return TrainingItem._make(reshaped_item)
     
+class AutoEncoderDatamodule(pl.LightningDataModule):
+    def __init__(self, input_da, domains, dl_kw):
+        super().__init__()
+        self.input_da = input_da
+        self.domains = domains
+        self.dl_kw = dl_kw
+
+        self.train_ds = None
+        self.val_ds = None
+        self.test_ds = None
+
+        self.is_data_normed = False
+
+    def setup(self, stage):
+        if not self.is_data_normed:
+            train_data = self.input_da.sel(self.domains['train'])
+            for var in self.input_da.data_vars:
+                mean, std = self.norm_stats(train_data[var])
+                for i in range(len(self.input_da[var])):
+                    self.input_da[var][i] = (self.input_da[var][i] - mean[i])/std[i]
+            self.is_data_normed = True
+
+        if stage == "fit":
+            self.train_ds = AutoEncoderDataset(
+                self.input_da.sel(self.domains['train'])
+            )
+            self.val_ds = AutoEncoderDataset(
+                self.input_da.sel(self.domains['val'])
+            )
+        if stage == "test":
+            self.val_ds = AutoEncoderDataset(
+                self.input_da.sel(self.domains['val'])
+            )
+            self.test_ds = AutoEncoderDataset(
+                self.input_da.sel(self.domains['test'])
+            )
+
+
+    def norm_stats(self, da):
+        mean = []
+        std = []
+        for i in range(len(da)):
+            mean.append(da[i].mean().values.item())
+            std.append(da[i].std().values.item())
+        return mean, std
+    
+    def train_dataloader(self):
+        return torch.utils.data.DataLoader(self.train_ds, shuffle=True, **self.dl_kw)
+    
+    def val_dataloader(self):
+        return torch.utils.data.DataLoader(self.val_ds, shuffle=True, **self.dl_kw)
+    
+    def test_dataloader(self):
+        return torch.utils.data.DataLoader(self.test_ds, shuffle=True, **self.dl_kw)
+    
+class AutoEncoderDataset(torch.utils.data.Dataset):
+    def __init__(self, da):
+        super().__init__()
+        self.da = da
+
+    def __len__(self):
+        return len(self.da.time_counter)
+    
+    def __getitem__(self, index):
+        return self.da.sel(time_counter=index)
+    
 class AlternateDataset(torch.utils.data.IterableDataset):
     def __init__(self, da, io_time_steps=2):
         super().__init__()
