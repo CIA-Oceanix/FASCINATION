@@ -124,10 +124,16 @@ def load_data(path1 , path2):
         [[*src.data.TrainingItem._fields]]
     )
 
-def load_sound_data(path):
+def load_sound_speed_fields(path):
     return (
         xr.open_dataset(path)
-    )    
+    )
+
+def load_acoustic_variables(path1, path2):
+    ssf = xr.open_dataset(path1).tranpose("time", "lat", "lon", "z")
+    cutoff_ecs = xr.open_dataset(path2).transpose("time", "variable", "lat", "lon")
+    
+    return ssf, cutoff_ecs
 
 def load_altimetry_data(path):
     return (

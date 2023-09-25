@@ -13,16 +13,14 @@ Created on Tue Apr  4 10:28:35 2023
     We are not applying the cubed sphere method described in the paper.
     """
 
-from typing import Any, List, Optional, Union
-from pytorch_lightning.utilities.types import EPOCH_OUTPUT, STEP_OUTPUT
+from typing import Any
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 import torch
 import torch.nn as nn
-import torch.functional as F
 import pytorch_lightning as pl
 import xarray as xr
 import pandas as pd
 import hydra
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from src.utils import psd_based_scores, rmse_based_scores
 
 padding_mode = 'reflect'
