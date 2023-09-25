@@ -126,7 +126,7 @@ def load_data(path1 , path2):
 
 def load_sound_speed_fields(path):
     return (
-        xr.open_dataset(path)
+        xr.open_dataset(path).tranpose("time", "z", "lat", "lon")
     )
 
 def load_acoustic_variables(path1, path2):
