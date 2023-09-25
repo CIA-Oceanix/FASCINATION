@@ -110,7 +110,7 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
             for var in self.input_da.data_vars:
                 mean, std = self.norm_stats(train_data[var])
                 for i in range(len(self.input_da[var])):
-                    self.input_da[var][i] = (self.input_da[var][i] - mean[i])/std[i]
+                    self.input_da[var][i] = (self.input_da[var][i] - mean)/std
             self.is_data_normed = True
 
         if stage == "fit":
@@ -130,11 +130,8 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
 
 
     def norm_stats(self, da):
-        mean = []
-        std = []
-        for i in range(len(da)):
-            mean.append(da[i].mean().values.item())
-            std.append(da[i].std().values.item())
+        mean = da.mean().values.item()
+        std = da.std().values.item()
         return mean, std
     
     def train_dataloader(self):
@@ -175,9 +172,9 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
             input_train, target_train = self.input.sel(self.domains['train']), self.target.sel(self.domains['train'])
             mean, std = self.norm_stats(input_train, target_train)
             for i in range(min(len(self.input.time), len(self.target.time))):
-                self.input[i] = (self.input[i] - mean["input"][i])/std["input"][i]
+                self.input[i] = (self.input[i] - mean["input"])/std["input"]
                 for j in self.target.data_vars:
-                    self.target[j][i] = (self.target[j][i] - mean[j][i])/std[j][i]
+                    self.target[j][i] = (self.target[j][i] - mean[j])/std[j]
             self.is_data_normed = True
         
         if stage == 'fit':
@@ -206,21 +203,20 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
     
     def norm_stats(self, input, target):
         mean = {
-            "input": [],
-            "cutoff_freq": [],
-            "ecs": []
+            "input": 0.0,
+            "cutoff_freq": 0.0,
+            "ecs": 0.0
         }
         std = {
-            "input":[],
-            "cutoff_freq":[],
-            "ecs": []
+            "input": 0.0,
+            "cutoff_freq": 0.0,
+            "ecs": 0.0
         }
-        for i in range(min(len(input.time), len(target.time))):
-            mean["input"].append(input[i].mean().values.item())
-            std["input"].append(input[i].std().values.item())
-            for j in target.data_vars:
-                mean[j].append(target[j][i].mean().values.item())
-                std[j].append(target[j][i].std().values.item())
+        mean["input"] = (input.mean().values.item())
+        std["input"] = (input.std().values.item())
+        for j in target.data_vars:
+            mean[j] = (target[j].mean().values.item())
+            std[j] = (target[j].std().values.item())
 
         return mean, std
 
