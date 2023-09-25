@@ -138,10 +138,10 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
         return torch.utils.data.DataLoader(self.train_ds, shuffle=True, **self.dl_kw)
     
     def val_dataloader(self):
-        return torch.utils.data.DataLoader(self.val_ds, shuffle=True, **self.dl_kw)
+        return torch.utils.data.DataLoader(self.val_ds, shuffle=False, **self.dl_kw)
     
     def test_dataloader(self):
-        return torch.utils.data.DataLoader(self.test_ds, shuffle=True, **self.dl_kw)
+        return torch.utils.data.DataLoader(self.test_ds, shuffle=False, **self.dl_kw)
     
 class AutoEncoderDataset(torch.utils.data.Dataset):
     def __init__(self, da):
@@ -152,7 +152,7 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
         return len(self.da.time)
     
     def __getitem__(self, index):
-        return TrainingItem._make([self.da[index], self.da[index]])
+        return TrainingItem._make((self.da[index], self.da[index]))
     
 class AcousticPredictorDatamodule(pl.LightningDataModule):
     def __init__(self, input, target, domains, dl_kw):
@@ -196,10 +196,10 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
         return torch.utils.data.Dataloader(self.train_ds, shuffle=True, **self.dl_kw)
     
     def val_dataloader(self):
-        return torch.utils.data.Dataloader(self.val_ds, shuffle=True, **self.dl_kw)
+        return torch.utils.data.Dataloader(self.val_ds, shuffle=False, **self.dl_kw)
     
     def test_dataloader(self):
-        return torch.utils.data.Dataloader(self.test_ds, shuffle=True, **self.dl_kw)
+        return torch.utils.data.Dataloader(self.test_ds, shuffle=False, **self.dl_kw)
     
     def norm_stats(self, input, target):
         mean = {
@@ -229,7 +229,7 @@ class AcousticPredictorDataset(torch.utils.data.Dataset):
         return min(len(self.volume.time), len(self.variables.time))
     
     def __getitem__(self, index):
-        return TrainingItem._make([self.volume[index], self.variables[index]])
+        return TrainingItem._make((self.volume[index], self.variables[index]))
     
 class AlternateDataset(torch.utils.data.IterableDataset):
     def __init__(self, da, io_time_steps=2):
