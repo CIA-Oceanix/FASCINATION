@@ -9,17 +9,9 @@ Created on Mon Aug 28 10:57:22 2023
     for 3D + t data, and to reconstruct it as good as possible with respect to variables deducted from the sound profiles.
     """
 
-from typing import Any, Optional
-from pytorch_lightning.utilities.types import STEP_OUTPUT
 import torch
 import torch.nn as nn
-import torch.functional as F
 import pytorch_lightning as pl
-import xarray as xr
-import pandas as pd
-import hydra
-from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-from src.utils import psd_based_scores, rmse_based_scores
 
 #version 0 de la loss où on prend en compte uniquement la loss de reconstruction avec une MSE, on regarde ni les gradients verticaux ni les métriques de 
 #reconstruction des paramètres acoustiques

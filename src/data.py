@@ -1,5 +1,6 @@
 import pytorch_lightning as pl
 import numpy as np
+from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 import torch.utils.data
 import xarray as xr
 import itertools
@@ -154,7 +155,85 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
         return len(self.da.time)
     
     def __getitem__(self, index):
-        return self.da.sel(time=index)
+        return TrainingItem._make([self.da[index], self.da[index]])
+    
+class AcousticPredictorDatamodule(pl.LightningDataModule):
+    def __init__(self, input, target, domains, dl_kw):
+        self.input = input
+        self.target = target
+        self.domains = domains
+        self.dl_kw = dl_kw
+
+        self.train_ds = None
+        self.val_ds = None
+        self.test_ds = None
+
+        self.is_data_normed = False
+    
+    def setup(self, stage):
+        if not self.is_data_normed:
+            input_train, target_train = self.input.sel(self.domains['train']), self.target.sel(self.domains['train'])
+            mean, std = self.norm_stats(input_train, target_train)
+            for i in range(min(len(self.input.time), len(self.target.time))):
+                self.input[i] = (self.input[i] - mean["input"][i])/std["input"][i]
+                for j in self.target.data_vars:
+                    self.target[j][i] = (self.target[j][i] - mean[j][i])/std[j][i]
+            self.is_data_normed = True
+        
+        if stage == 'fit':
+            self.train_ds = AcousticPredictorDataset(
+                self.input.sel(self.domains['train']), self.target.sel(self.domains['train'])
+                )
+            self.val_ds = AcousticPredictorDataset(
+                self.input.sel(self.domains['val']), self.target.sel(self.domains['val'])
+            )
+        if stage == 'test':
+            self.val_ds = AcousticPredictorDataset(
+                self.input.sel(self.domains['val']), self.target.sel(self.domains['val'])
+            )
+            self.test_ds = AcousticPredictorDataset(
+                self.input.sel(self.domains['test']), self.target.sel(self.domains['test'])
+            )
+
+    def train_dataloader(self):
+        return torch.utils.data.Dataloader(self.train_ds, shuffle=True, **self.dl_kw)
+    
+    def val_dataloader(self):
+        return torch.utils.data.Dataloader(self.val_ds, shuffle=True, **self.dl_kw)
+    
+    def test_dataloader(self):
+        return torch.utils.data.Dataloader(self.test_ds, shuffle=True, **self.dl_kw)
+    
+    def norm_stats(self, input, target):
+        mean = {
+            "input": [],
+            "cutoff_freq": [],
+            "ecs": []
+        }
+        std = {
+            "input":[],
+            "cutoff_freq":[],
+            "ecs": []
+        }
+        for i in range(min(len(input.time), len(target.time))):
+            mean["input"].append(input[i].mean().values.item())
+            std["input"].append(input[i].std().values.item())
+            for j in target.data_vars:
+                mean[j].append(target[j][i].mean().values.item())
+                std[j].append(target[j][i].std().values.item())
+
+        return mean, std
+
+class AcousticPredictorDataset(torch.utils.data.Dataset):
+    def __init__(self, volume, variables):
+        super().__init__()
+        self.volume, self.variables = volume, variables
+
+    def __len__(self):
+        return min(len(self.volume.time), len(self.variables.time))
+    
+    def __getitem__(self, index):
+        return TrainingItem._make([self.volume[index], self.variables[index]])
     
 class AlternateDataset(torch.utils.data.IterableDataset):
     def __init__(self, da, io_time_steps=2):
