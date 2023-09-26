@@ -109,8 +109,7 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
             train_data = self.input_da.sel(self.domains['train'])
             for var in self.input_da.data_vars:
                 mean, std = self.norm_stats(train_data[var])
-                for i in range(len(self.input_da[var])):
-                    self.input_da[var][i] = (self.input_da[var][i] - mean)/std
+                self.input_da = (self.input_da - mean)/std
             self.is_data_normed = True
 
         if stage == "fit":
@@ -130,8 +129,8 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
 
 
     def norm_stats(self, da):
-        mean = da.mean().values.item()
-        std = da.std().values.item()
+        mean = da.mean(dim=['z', 'lat', 'lon'])
+        std = da.std(dim=['z', 'lat', 'lon'])
         return mean, std
     
     def train_dataloader(self):
@@ -152,7 +151,7 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
         return len(self.da.time)
     
     def __getitem__(self, index):
-        return TrainingItem._make((self.da[index], self.da[index]))
+        return TrainingItem._make((self.da.celerity[index].data.astype(np.float32), self.da.celerity[index].data.astype(np.float32)))
     
 class AcousticPredictorDatamodule(pl.LightningDataModule):
     def __init__(self, input, target, domains, dl_kw):
@@ -229,7 +228,7 @@ class AcousticPredictorDataset(torch.utils.data.Dataset):
         return min(len(self.volume.time), len(self.variables.time))
     
     def __getitem__(self, index):
-        return TrainingItem._make((self.volume[index], self.variables[index]))
+        return TrainingItem._make((self.volume.celerity[index], self.variables[index]))
     
 class AlternateDataset(torch.utils.data.IterableDataset):
     def __init__(self, da, io_time_steps=2):

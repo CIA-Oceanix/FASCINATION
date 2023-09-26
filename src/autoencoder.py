@@ -49,7 +49,7 @@ class Autoencoder(pl.LightningModule):
         x, y = batch
         output = self(x)
         loss = nn.MSELoss(output, y)
-        self.log('train_loss', loss, on_step= False, on_epoch=True)
+        self.log('train_loss', loss, on_step= True, on_epoch=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
