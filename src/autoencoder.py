@@ -21,7 +21,7 @@ class Autoencoder(pl.LightningModule):
         super(Autoencoder, self).__init__()
         self.lr = lr
         self.encoder = nn.Sequential(
-            nn.Conv2d(240, 16, kernel_size=3, padding=1),
+            nn.Conv2d(107, 16, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             nn.Conv2d(16, 32, kernel_size=3, padding=1),
@@ -32,7 +32,7 @@ class Autoencoder(pl.LightningModule):
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(32, 16, kernel_size=2, stride=2),
             nn.ReLU(),
-            nn.ConvTranspose2d(16, 240, kernel_size=2, stride=2),
+            nn.ConvTranspose2d(16, 107, kernel_size=2, stride=2),
             nn.Sigmoid()
         )
 
@@ -48,20 +48,22 @@ class Autoencoder(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss(output, y)
+        msk = y != 0
+        loss = nn.MSELoss()(output[msk], y[msk])
         self.log('train_loss', loss, on_step= True, on_epoch=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss(output, y)
+        msk = y != 0
+        loss = nn.MSELoss()(output[msk], y[msk])
         self.log('val_loss', loss, on_step= False, on_epoch=True)
         return loss
     
     def test_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss(output, y)
+        loss = nn.MSELoss()(output, y)
         self.log('test_loss', loss, on_step= False, on_epoch=True)
         return loss

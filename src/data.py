@@ -129,8 +129,8 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
 
 
     def norm_stats(self, da):
-        mean = da.mean(dim=['z', 'lat', 'lon'])
-        std = da.std(dim=['z', 'lat', 'lon'])
+        mean = da.mean()
+        std = da.std()
         return mean, std
     
     def train_dataloader(self):
@@ -151,7 +151,7 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
         return len(self.da.time)
     
     def __getitem__(self, index):
-        return TrainingItem._make((self.da.celerity[index].data.astype(np.float32), self.da.celerity[index].data.astype(np.float32)))
+        return TrainingItem._make((np.nan_to_num(self.da.celerity[index].data.astype(np.float32)), np.nan_to_num(self.da.celerity[index].data.astype(np.float32))))
     
 class AcousticPredictorDatamodule(pl.LightningDataModule):
     def __init__(self, input, target, domains, dl_kw):
