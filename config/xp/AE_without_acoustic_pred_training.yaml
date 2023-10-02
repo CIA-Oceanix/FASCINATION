@@ -7,14 +7,15 @@ trainer:
   _target_: pytorch_lightning.Trainer
   inference_mode: False
   accelerator: gpu
-  devices: 2
+  devices: 1
+  check_val_every_n_epoch: 1
   logger: 
     _target_: pytorch_lightning.loggers.CSVLogger
     save_dir: ${hydra:runtime.output_dir}
     name: ${hydra:runtime.choices.xp}
     version: ''
   min_epochs: 0
-  max_epochs: 200
+  max_epochs: 300
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -35,7 +36,7 @@ datamodule:
       time: {_target_: builtins.slice, _args_: ['2009-08-06', '2009-10-19']}
     test: 
       time: {_target_: builtins.slice,  _args_: ['2009-07-01', '2009-08-05']}
-  dl_kw: {batch_size: 4, num_workers: 32}
+  dl_kw: {batch_size: 1, num_workers: 16}
 
 model:
   _target_: src.autoencoder.Autoencoder
