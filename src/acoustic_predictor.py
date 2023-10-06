@@ -52,20 +52,20 @@ class AcousticPredictor(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss(output, y)
+        loss = nn.MSELoss()(output, y)
         self.log('train_loss', loss, on_step= False, on_epoch=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss(output, y)
+        loss = nn.MSELoss()(output, y)
         self.log('val_loss', loss, on_step= False, on_epoch=True)
         return loss
     
     def test_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss(output, y)
+        loss = nn.MSELoss()(output, y)
         self.log('test_loss', loss, on_step= False, on_epoch=True)
         return loss
