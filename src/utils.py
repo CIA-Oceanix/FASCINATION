@@ -13,6 +13,7 @@ import src.data
 import xarray as xr
 import matplotlib.pyplot as plt
 
+np.random.seed(42) # setting seed for random permutation
 
 def half_lr_adam(lit_mod, lr):
     return torch.optim.Adam(
@@ -125,14 +126,23 @@ def load_data(path1 , path2):
     )
 
 def load_sound_speed_fields(path):
-    return (
-        xr.open_dataset(path).transpose("time", "z", "lat", "lon")
-    )
+    ssf = xr.open_dataset(path).transpose("time", "z", "lat", "lon")
+    shuffled_index = np.random.permutation(len(ssf.time))
+
+    return ssf.isel(time=shuffled_index) # shuffling data to better acount for seasonal variability
 
 def load_acoustic_variables(path1, path2):
-    ssf = xr.open_dataset(path1).tranpose("time", "lat", "lon", "z")
+    ssf = xr.open_dataset(path1).transpose("time", "lat", "lon", "z")
     cutoff_ecs = xr.open_dataset(path2).transpose("time", "variable", "lat", "lon")
     
+    if (len(ssf.time) == len(cutoff_ecs.time)): # shuffling data because ecs varies a lot between summer and the rest of the year
+        shuffled_index = np.random.permutation(len(ssf.time))
+        ssf = ssf.isel(time=shuffled_index)
+        cutoff_ecs = cutoff_ecs.isel(time=shuffled_index)
+    
+    for var in cutoff_ecs.data_vars:
+        cutoff_ecs[var] = xr.where(cutoff_ecs[var] == 999999999999.0, 0, cutoff_ecs[var]) # setting infinite values to 0
+
     return ssf, cutoff_ecs
 
 def load_altimetry_data(path):

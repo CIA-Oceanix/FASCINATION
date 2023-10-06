@@ -106,7 +106,7 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
 
     def setup(self, stage):
         if not self.is_data_normed:
-            train_data = self.input_da.sel(self.domains['train'])
+            train_data = self.input_da.isel(self.domains['train'])
             for var in self.input_da.data_vars:
                 mean, std = self.norm_stats(train_data[var])
                 self.input_da = (self.input_da - mean)/std
@@ -114,17 +114,17 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
 
         if stage == "fit":
             self.train_ds = AutoEncoderDataset(
-                self.input_da.sel(self.domains['train'])
+                self.input_da.isel(self.domains['train'])
             )
             self.val_ds = AutoEncoderDataset(
-                self.input_da.sel(self.domains['val'])
+                self.input_da.isel(self.domains['val'])
             )
         if stage == "test":
             self.val_ds = AutoEncoderDataset(
-                self.input_da.sel(self.domains['val'])
+                self.input_da.isel(self.domains['val'])
             )
             self.test_ds = AutoEncoderDataset(
-                self.input_da.sel(self.domains['test'])
+                self.input_da.isel(self.domains['test'])
             )
 
 
@@ -168,27 +168,27 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
     
     def setup(self, stage):
         if not self.is_data_normed:
-            input_train, target_train = self.input.sel(self.domains['train']), self.target.sel(self.domains['train'])
+            input_train, target_train = self.input.isel(self.domains['train']), self.target.isel(self.domains['train'])
             mean, std = self.norm_stats(input_train, target_train)
-            for i in range(min(len(self.input.time), len(self.target.time))):
-                self.input[i] = (self.input[i] - mean["input"])/std["input"]
-                for j in self.target.data_vars:
-                    self.target[j][i] = (self.target[j][i] - mean[j])/std[j]
+            self.input = (self.input - mean["input"])/std["input"]
+            for j in self.target.data_vars:
+                msk = self.target[j] != 0
+                self.target[j][msk] = (self.target[j][msk] - mean[j])/std[j]
             self.is_data_normed = True
         
         if stage == 'fit':
             self.train_ds = AcousticPredictorDataset(
-                self.input.sel(self.domains['train']), self.target.sel(self.domains['train'])
+                self.input.isel(self.domains['train']), self.target.isel(self.domains['train'])
                 )
             self.val_ds = AcousticPredictorDataset(
-                self.input.sel(self.domains['val']), self.target.sel(self.domains['val'])
+                self.input.isel(self.domains['val']), self.target.isel(self.domains['val'])
             )
         if stage == 'test':
             self.val_ds = AcousticPredictorDataset(
-                self.input.sel(self.domains['val']), self.target.sel(self.domains['val'])
+                self.input.isel(self.domains['val']), self.target.isel(self.domains['val'])
             )
             self.test_ds = AcousticPredictorDataset(
-                self.input.sel(self.domains['test']), self.target.sel(self.domains['test'])
+                self.input.isel(self.domains['test']), self.target.isel(self.domains['test'])
             )
 
     def train_dataloader(self):
@@ -201,21 +201,13 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
         return torch.utils.data.Dataloader(self.test_ds, shuffle=False, **self.dl_kw)
     
     def norm_stats(self, input, target):
-        mean = {
-            "input": 0.0,
-            "cutoff_freq": 0.0,
-            "ecs": 0.0
-        }
-        std = {
-            "input": 0.0,
-            "cutoff_freq": 0.0,
-            "ecs": 0.0
-        }
-        mean["input"] = (input.mean().values.item())
-        std["input"] = (input.std().values.item())
+        mean, std = {}, {}
+        mean["input"] = input.mean()
+        std["input"] = input.std()
         for j in target.data_vars:
-            mean[j] = (target[j].mean().values.item())
-            std[j] = (target[j].std().values.item())
+            msk = target[j] != 0
+            mean[j] = target[j][msk].mean()
+            std[j] = target[j][msk].std()
 
         return mean, std
 
@@ -228,7 +220,7 @@ class AcousticPredictorDataset(torch.utils.data.Dataset):
         return min(len(self.volume.time), len(self.variables.time))
     
     def __getitem__(self, index):
-        return TrainingItem._make((self.volume.celerity[index], self.variables[index]))
+        return TrainingItem._make((self.volume.celerity[index].data.astype(np.float32), self.variables[index].data.astype(np.float32)))
     
 class AlternateDataset(torch.utils.data.IterableDataset):
     def __init__(self, da, io_time_steps=2):
