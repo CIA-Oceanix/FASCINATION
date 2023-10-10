@@ -133,13 +133,14 @@ def load_sound_speed_fields(path):
 
 def load_acoustic_variables(path1, path2):
     ssf = xr.open_dataset(path1).transpose("time", "lat", "lon", "z")
-    cutoff_ecs = xr.open_dataset(path2).transpose("time", "variable", "lat", "lon")
+    cutoff_ecs = xr.open_dataset(path2).transpose("time", "lat", "lon")
     
     if (len(ssf.time) == len(cutoff_ecs.time)): # shuffling data because ecs varies a lot between summer and the rest of the year
         shuffled_index = np.random.permutation(len(ssf.time))
         ssf = ssf.isel(time=shuffled_index)
         cutoff_ecs = cutoff_ecs.isel(time=shuffled_index)
-    
+    else:
+        raise IndexError("time sequence lengths should be the same for both ssf and cutoff_ecs")
     for var in cutoff_ecs.data_vars:
         cutoff_ecs[var] = xr.where(cutoff_ecs[var] == 999999999999.0, 0, cutoff_ecs[var]) # setting infinite values to 0
 
