@@ -219,7 +219,7 @@ class AcousticPredictorDataset(torch.utils.data.Dataset):
         return min(len(self.volume.time), len(self.variables.time))
     
     def __getitem__(self, index):
-        return TrainingItem._make((self.volume.celerity[index].data.astype(np.float32), self.variables[index].data.astype(np.float32)))
+        return TrainingItem._make((np.nan_to_num(self.volume.celerity[index].data.astype(np.float32)), self.variables[index].data.astype(np.float32)))
     
 class AlternateDataset(torch.utils.data.IterableDataset):
     def __init__(self, da, io_time_steps=2):
