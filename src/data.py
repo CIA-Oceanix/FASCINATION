@@ -154,11 +154,10 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
         return TrainingItem._make((np.nan_to_num(self.da.celerity[index].data.astype(np.float32)), np.nan_to_num(self.da.celerity[index].data.astype(np.float32))))
     
 class AcousticPredictorDatamodule(pl.LightningDataModule):
-    def __init__(self, input_da, domains, dl_kw):
+    def __init__(self, input_da, dl_kw):
         super().__init__()
         self.input = input_da[0]
         self.target = input_da[1]
-        self.domains = domains
         self.dl_kw = dl_kw
 
         self.train_ds = None
@@ -169,7 +168,9 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
     
     def setup(self, stage):
         if not self.is_data_normed:
-            input_train, target_train = self.input.isel(self.domains['train']), self.target.isel(self.domains['train'])
+            random_dataset = AcousticPredictorDataset(self.input, self.target)
+            train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
+            input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
             mean, std = self.norm_stats(input_train, target_train)
             self.input = (self.input - mean["input"])/std["input"]
             for j in self.target.data_vars:
@@ -178,17 +179,17 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
         
         if stage == 'fit':
             self.train_ds = AcousticPredictorDataset(
-                self.input.isel(self.domains['train']), self.target.isel(self.domains['train'])
+                self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
                 )
             self.val_ds = AcousticPredictorDataset(
-                self.input.isel(self.domains['val']), self.target.isel(self.domains['val'])
+                self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
             )
         if stage == 'test':
             self.val_ds = AcousticPredictorDataset(
-                self.input.isel(self.domains['val']), self.target.isel(self.domains['val'])
+                self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
             )
             self.test_ds = AcousticPredictorDataset(
-                self.input.isel(self.domains['test']), self.target.isel(self.domains['test'])
+                self.input.isel(time=test_da.indices), self.target.isel(time=test_da.indices)
             )
 
     def train_dataloader(self):

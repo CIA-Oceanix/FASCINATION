@@ -66,6 +66,12 @@ class AcousticPredictor(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss()(output, y)
-        self.log('test_loss', loss, on_step= False, on_epoch=True)
-        return loss
+        y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
+        test_loss = {
+            "ECS": 0.0,
+            "cutoff_freq": 0.0
+        }
+        for target, prediction, key in zip(y_split, output_split, test_loss.keys()):
+            test_loss[key] = (nn.MSELoss()(target, prediction).item())
+        self.log_dict(test_loss, on_step= False, on_epoch=True)
+        return test_loss
