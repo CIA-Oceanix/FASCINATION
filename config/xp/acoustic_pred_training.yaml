@@ -32,13 +32,6 @@ datamodule:
     _target_: src.utils.load_acoustic_variables
     path1: ${paths.sound}
     path2: ${paths.variables}
-  domains:
-    train:
-      time: {_target_: builtins.slice, _args_: [0, 254]}
-    val: 
-      time: {_target_: builtins.slice, _args_: [254, 331]}
-    test: 
-      time: {_target_: builtins.slice,  _args_: [331, 365]}
   dl_kw: {batch_size: 4, num_workers: 16}
 
 model:

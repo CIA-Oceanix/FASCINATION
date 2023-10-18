@@ -31,16 +31,19 @@ class AcousticPredictor(pl.LightningModule):
         super(AcousticPredictor, self).__init__()
         self.lr = lr
 
-        self.conv1 = ConvBlock(input_depth, 64)
-        self.conv2 = ConvBlock(64, 32)
-        self.conv3 = ConvBlock(32, 16)
+        self.conv1 = ConvBlock(input_depth, 96)
+        self.conv2 = ConvBlock(96, 64)
+        self.conv3 = ConvBlock(64, 32)
+        self.conv4 = ConvBlock(32, 16)
         self.out = ConvBlock(16, acoustic_variables)
 
     def forward(self, x):
         return self.out(
-            self.conv3(
-                self.conv2(
-                    self.conv1(x)
+            self.conv4 (
+                self.conv3(
+                    self.conv2(
+                        self.conv1(x)
+                    )
                 )
             )
         )
@@ -68,10 +71,12 @@ class AcousticPredictor(pl.LightningModule):
         output = self(x)
         y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
         test_loss = {
-            "ECS": 0.0,
-            "cutoff_freq": 0.0
+            "cutoff_freq": 0.0,
+            "ecs": 0.0
         }
-        for target, prediction, key in zip(y_split, output_split, test_loss.keys()):
-            test_loss[key] = (nn.MSELoss()(target, prediction).item())
+        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0], output_split[0]*75995.34603938+10128.08238546)
+        test_loss["ecs"] = nn.MSELoss()(y_split[1], output_split[1]*110.6907563+90.98022121)
+        # for target, prediction, key in zip(y_split, output_split, test_loss.keys()):
+        #     test_loss[key] = (nn.MSELoss()(target, prediction).item())
         self.log_dict(test_loss, on_step= False, on_epoch=True)
         return test_loss
