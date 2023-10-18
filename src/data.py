@@ -167,14 +167,14 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
         self.is_data_normed = False
     
     def setup(self, stage):
+        random_dataset = AcousticPredictorDataset(self.input, self.target)
+        train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
         if not self.is_data_normed:
-            random_dataset = AcousticPredictorDataset(self.input, self.target)
-            train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
             input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
-            mean, std = self.norm_stats(input_train, target_train)
-            self.input = (self.input - mean["input"])/std["input"]
-            for j in self.target.data_vars:
-                self.target[j] = (self.target[j] - mean[j])/std[j]
+            #mean, std = self.norm_stats(input_train, target_train)
+            self.input = (self.input - 1509)/29.22
+            self.target["cutoff_freq"] = (self.target["cutoff_freq"] - 10128.08238546)/75995.34603938
+            self.target["ecs"] = (self.target["ecs"] - 90.98022121)/110.6907563
             self.is_data_normed = True
         
         if stage == 'fit':
