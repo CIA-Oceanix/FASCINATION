@@ -37,8 +37,9 @@ datamodule:
 model:
   _target_: src.acoustic_predictor.AcousticPredictor
   input_depth: 107
-  lr: 0.001
   acoustic_variables: 2
+  lr: 0.001
+  T_max: 10
 
 
 entrypoints:
