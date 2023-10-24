@@ -21,6 +21,7 @@ class ConvBlock(pl.LightningModule):
         self.out_channels = out_channels
         self.block = nn.Sequential(
             nn.Conv2d(in_channels=self.in_channels, out_channels=self.out_channels, kernel_size= 3, padding=1),
+            nn.BatchNorm2d(num_features=self.out_channels),
             nn.ReLU()
         )
     def forward(self, x):
