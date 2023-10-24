@@ -88,7 +88,8 @@ class AcousticPredictor(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss()(output, y)
+        y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
+        loss = 0.1*nn.MSELoss()(y_split[0], output_split[0]) + nn.MSELoss()(y_split[1], output_split[1])
         self.log('train_loss', loss, on_step= False, on_epoch=True)
         return loss
     
