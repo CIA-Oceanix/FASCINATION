@@ -81,9 +81,9 @@ class AcousticPredictor(pl.LightningModule):
         )
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.T_max)
-        return [optimizer], [scheduler]
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.T_max)
+        return [self.optimizer], [self.scheduler]
     
     def training_step(self, batch, batch_idx):
         x, y = batch
