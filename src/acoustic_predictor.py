@@ -9,6 +9,7 @@ Created on Thu Sep 14 14:45:48 2023
     it accurately reconstructs the variables of interest.
     """
 
+from typing import Any
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -26,24 +27,54 @@ class ConvBlock(pl.LightningModule):
         )
     def forward(self, x):
         return self.block(x)
+    
+class ReduceDomain(pl.LightningModule):
+    def __init__(self, resize_factor): # assuming the domain is a square
+        super().__init__()
+        self.resize_factor = resize_factor
+        self.block = nn.Sequential(
+            nn.AvgPool2d(kernel_size=2, stride=2),
+            nn.Sigmoid()
+        )
+    def forward(self, x):
+        return self.block(x)
+
+class IncreaseDomain(pl.LightningModule):
+    def __init__(self, scale_factor):
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.block = nn.Sequential(
+            nn.Upsample(scale_factor=self.scale_factor, mode='bicubic', align_corners=True),
+            nn.Sigmoid()
+        )
+    def forward(self, x):
+        return self.block(x)
+
 
 class AcousticPredictor(pl.LightningModule):
-    def __init__(self, input_depth, acoustic_variables=2, lr=1e-3):
+    def __init__(self, input_depth, acoustic_variables=2, lr=1e-3, T_max=10):
         super(AcousticPredictor, self).__init__()
         self.lr = lr
+        self.T_max = T_max
 
+        self.reduce = ReduceDomain(2)
         self.conv1 = ConvBlock(input_depth, 96)
         self.conv2 = ConvBlock(96, 64)
         self.conv3 = ConvBlock(64, 32)
         self.conv4 = ConvBlock(32, 16)
-        self.out = ConvBlock(16, acoustic_variables)
+        self.finalconv = ConvBlock(16, acoustic_variables)
+        self.out = IncreaseDomain(2)
 
     def forward(self, x):
         return self.out(
-            self.conv4 (
-                self.conv3(
-                    self.conv2(
-                        self.conv1(x)
+            self.finalconv(
+                self.conv4 (
+                    self.conv3(
+                        self.conv2(
+                            self.conv1(
+                                self.reduce(x)
+                            )
+                        )
                     )
                 )
             )
@@ -51,7 +82,8 @@ class AcousticPredictor(pl.LightningModule):
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        return optimizer
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.T_max)
+        return [optimizer], [scheduler]
     
     def training_step(self, batch, batch_idx):
         x, y = batch
@@ -59,6 +91,9 @@ class AcousticPredictor(pl.LightningModule):
         loss = nn.MSELoss()(output, y)
         self.log('train_loss', loss, on_step= False, on_epoch=True)
         return loss
+    
+    def training_epoch_end(self, outputs):
+        self.scheduler.step()
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
