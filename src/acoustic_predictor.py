@@ -66,19 +66,16 @@ class AcousticPredictor(pl.LightningModule):
         self.out = IncreaseDomain(2)
 
     def forward(self, x):
-        return self.out(
-            self.finalconv(
-                self.conv4 (
-                    self.conv3(
-                        self.conv2(
-                            self.conv1(
-                                self.reduce(x)
+        return self.finalconv(
+                    self.conv4 (
+                        self.conv3(
+                            self.conv2(
+                                self.conv1(x)
                             )
                         )
                     )
                 )
-            )
-        )
+        
     
     def configure_optimizers(self):
         self.optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
@@ -88,8 +85,9 @@ class AcousticPredictor(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
-        loss = 0.1*nn.MSELoss()(y_split[0], output_split[0]) + nn.MSELoss()(y_split[1], output_split[1])
+        # y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
+        # loss = 0.1*nn.MSELoss()(y_split[0], output_split[0]) + nn.MSELoss()(y_split[1], output_split[1])
+        loss = nn.MSELoss()(y, output)
         self.log('train_loss', loss, on_step= False, on_epoch=True)
         return loss
     
@@ -111,8 +109,8 @@ class AcousticPredictor(pl.LightningModule):
             "cutoff_freq": 0.0,
             "ecs": 0.0
         }
-        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0], output_split[0]*75995.34603938+10128.08238546)
-        test_loss["ecs"] = nn.MSELoss()(y_split[1], output_split[1]*110.6907563+90.98022121)
+        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0], output_split[0]*70924.70514566838+10348.30130698)
+        test_loss["ecs"] = nn.MSELoss()(y_split[1], output_split[1]*107.22599399+86.06481626)
         # for target, prediction, key in zip(y_split, output_split, test_loss.keys()):
         #     test_loss[key] = (nn.MSELoss()(target, prediction).item())
         self.log_dict(test_loss, on_step= False, on_epoch=True)
