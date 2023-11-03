@@ -17,7 +17,7 @@ trainer:
     name: ${hydra:runtime.choices.xp}
     version: ''
   min_epochs: 0
-  max_epochs: 300
+  max_epochs: 50
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
