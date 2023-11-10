@@ -137,7 +137,8 @@ def load_acoustic_variables(path1, path2):
     
     for var in cutoff_ecs.data_vars:
         cutoff_ecs[var] = xr.where(cutoff_ecs[var] == 999999999999.0, 0, cutoff_ecs[var]) # setting infinite values to 0
-    cutoff_ecs["cutoff_freq"] = xr.where(cutoff_ecs["cutoff_freq"] > 10000, 10000, cutoff_ecs["cutoff_freq"])
+    cutoff_ecs["cutoff_freq"] = xr.where(cutoff_ecs["cutoff_freq"] > 10000, 10000, cutoff_ecs["cutoff_freq"]) # capping values to help convergence
+    cutoff_ecs["ecs"] = xr.where(cutoff_ecs["ecs"] > 210.16294821, 210.16294821, cutoff_ecs["ecs"])
 
     return ssf, cutoff_ecs
 
