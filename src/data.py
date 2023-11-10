@@ -174,7 +174,7 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
             #mean, std = self.norm_stats(input_train, target_train)
             self.input = (self.input - 472.33156028)/(1552.54994512 - 472.33156028)
             self.target["cutoff_freq"] = (self.target["cutoff_freq"])/10000
-            self.target["ecs"] = (self.target["ecs"])/670.25141631
+            self.target["ecs"] = (self.target["ecs"])/210.16294821
             self.is_data_normed = True
         
         if stage == 'fit':
