@@ -109,8 +109,8 @@ class AcousticPredictor(pl.LightningModule):
             "cutoff_freq": 0.0,
             "ecs": 0.0
         }
-        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0], output_split[0]*70924.70514566838+10348.30130698)
-        test_loss["ecs"] = nn.MSELoss()(y_split[1], output_split[1]*107.22599399+86.06481626)
+        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0], output_split[0]*10000)
+        test_loss["ecs"] = nn.MSELoss()(y_split[1], output_split[1]*670)
         # for target, prediction, key in zip(y_split, output_split, test_loss.keys()):
         #     test_loss[key] = (nn.MSELoss()(target, prediction).item())
         self.log_dict(test_loss, on_step= False, on_epoch=True)
