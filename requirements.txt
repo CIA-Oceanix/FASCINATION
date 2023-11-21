@@ -1,0 +1,6 @@
+pytorch-lightning==1.8.6
+numpy==1.24.3
+torch==2.0.1
+xrft==1.0.1
+xarray==2023.4.2
+matplotlib==3.7.1

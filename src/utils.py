@@ -1,15 +1,6 @@
 import numpy as np
-from pathlib import Path
-import functools as ft
-import metpy.calc as mpcalc
-import kornia
-import pandas as pd
 import xrft
 import torch
-import pyinterp
-import pyinterp.fill
-import pyinterp.backends.xarray
-import src.data
 import xarray as xr
 import matplotlib.pyplot as plt
 
@@ -58,73 +49,6 @@ def triang_lr_adam(lit_mod, lr_min=5e-5, lr_max=3e-3, nsteps=200):
         ),
     }
 
-
-def remove_nan(da):
-    da["lon"] = da.lon.assign_attrs(units="degrees_east")
-    da["lat"] = da.lat.assign_attrs(units="degrees_north")
-
-    da.transpose("lon", "lat", "time")[:, :] = pyinterp.fill.gauss_seidel(
-        pyinterp.backends.xarray.Grid3D(da)
-    )[1]
-    return da
-
-
-def get_constant_crop(patch_dims, crop, dim_order=["time", "lat", "lon"]):
-    patch_weight = np.zeros([patch_dims[d] for d in dim_order], dtype="float32")
-    mask = tuple(
-        slice(crop[d], -crop[d]) if crop.get(d, 0) > 0 else slice(None, None)
-        for d in dim_order
-    )
-    patch_weight[mask] = 1.0
-    return patch_weight
-
-
-def get_cropped_hanning_mask(patch_dims, crop, **kwargs):
-    pw = get_constant_crop(patch_dims, crop)
-
-    t_msk = kornia.filters.get_hanning_kernel1d(patch_dims["time"])
-
-    patch_weight = t_msk[:, None, None] * pw
-    return patch_weight.cpu().numpy()
-
-
-def get_triang_time_wei(patch_dims, crop):
-    pw = get_constant_crop(patch_dims, crop)
-    return np.fromfunction(
-        lambda t, *a: (
-            (1 - np.abs(1 + 2 * t - patch_dims["time"]) / patch_dims["time"]) * pw
-        ),
-        patch_dims.values(),
-    )
-
-def load_data(path1 , path2):
-    d1 = xr.open_dataset(path1)
-    d2 = xr.open_dataset(path2)
-
-    d1 = d1.sel(lat=slice(32,44), lon=slice(-66,-53)) # gulf stream zone
-    d2 = d2.sel(lat=slice(32,44), lon=slice(-66,-53))
-
-    if ('time' in d1.variables) and ('time' in d2.variables):
-        d1['time'] = (xr.DataArray((pd.to_datetime(d1.time, unit='s') + pd.DateOffset(years=43)),
-                            dims=['time']))
-
-        d2['time'] = (xr.DataArray((pd.to_datetime(d2.time, unit='s') + pd.DateOffset(years=43)),
-                            dims=['time']))
-    
-    tmp_array = xr.concat([d1[list(d1.data_vars)[0]], d2[list(d2.data_vars)[0]]], dim='var')
-    tmp_array.coords['var'] = ['ssh', 'sst']
-
-    for el in tmp_array:
-        el = remove_nan(el).transpose("time", "lat", "lon")
-
-    if len(tmp_array['time'])%2 != 0:
-        tmp_array = tmp_array.isel(time=slice(None, -1))
-
-    return (
-        xr.Dataset({'input': tmp_array.isel(time=np.arange(0, len(tmp_array['time'])-4)), 'tgt': tmp_array.isel(time=np.arange(2, len(tmp_array['time'])))})
-        [[*src.data.TrainingItem._fields]]
-    )
-
 def load_sound_speed_fields(path):
     ssf = xr.open_dataset(path).transpose("time", "z", "lat", "lon")
     shuffled_index = np.random.permutation(len(ssf.time))
@@ -137,23 +61,9 @@ def load_acoustic_variables(path1, path2):
     
     for var in cutoff_ecs.data_vars:
         cutoff_ecs[var] = xr.where(cutoff_ecs[var] == 999999999999.0, 0, cutoff_ecs[var]) # setting infinite values to 0
-    cutoff_ecs["cutoff_freq"] = xr.where(cutoff_ecs["cutoff_freq"] > 10000, 10000, cutoff_ecs["cutoff_freq"]) # capping values to help convergence
-    cutoff_ecs["ecs"] = xr.where(cutoff_ecs["ecs"] > 210.16294821, 210.16294821, cutoff_ecs["ecs"])
+    cutoff_ecs["cutoff_freq"] = xr.where(cutoff_ecs["cutoff_freq"] > 10000, 10000, cutoff_ecs["cutoff_freq"]) # capping cutoff frequency at 10kHz to make training more stable. We are also only interested about frequencies around 1kHz
 
     return ssf, cutoff_ecs
-
-def load_altimetry_data(path):
-    return (
-        xr.open_dataset(path)
-        .load()
-        .assign(
-            input=lambda ds: ds.nadir_obs,
-            tgt=lambda ds: (remove_nan(ds.ssh), remove_nan(ds.sst))
-        )[[*src.data.TrainingItem._fields]]
-        .transpose("time", "lat", "lon")
-        .to_array()
-    )
-
 
 def rmse_based_scores(da_rec, da_ref):
     rmse_t = (
@@ -213,92 +123,3 @@ def psd_based_scores(da_rec, da_ref):
         np.round(shortest_spatial_wavelength_resolved, 3),
         np.round(shortest_temporal_wavelength_resolved, 3),
     )
-
-
-def diagnostics(lit_mod, test_domain):
-    test_data = lit_mod.test_data.sel(test_domain)
-    return diagnostics_from_ds(test_data, test_domain)
-
-
-def diagnostics_from_ds(test_data, test_domain):
-    metrics = {
-        "RMSE (m)": test_data.pipe(lambda ds: (ds.rec_ssh - ds.ssh))
-        .pipe(lambda da: da**2)
-        .mean()
-        .pipe(np.sqrt)
-        .item(),
-        **dict(
-            zip(
-                ["λx", "λt"],
-                test_data.pipe(lambda ds: psd_based_scores(ds.rec_ssh, ds.ssh)[1:]),
-            )
-        ),
-        **dict(
-            zip(
-                ["μ", "σ"],
-                test_data.pipe(lambda ds: rmse_based_scores(ds.rec_ssh, ds.ssh)[2:]),
-            )
-        ),
-    }
-    return pd.Series(metrics, name="osse_metrics")
-
-
-def ensemble_metrics(trainer, lit_mod, ckpt_list, dm, save_path):
-    metrics = []
-    test_data = xr.Dataset()
-    for i, ckpt in enumerate(ckpt_list):
-        trainer.test(lit_mod, ckpt_path=ckpt, datamodule=dm)
-        rmse = (
-            lit_mod.test_data.pipe(lambda ds: (ds.rec_ssh - ds.ssh))
-            .pipe(lambda da: da**2)
-            .mean()
-            .pipe(np.sqrt)
-            .item()
-        )
-        lx, lt = psd_based_scores(lit_mod.test_data.rec_ssh, lit_mod.test_data.ssh)[1:]
-        mu, sig = rmse_based_scores(lit_mod.test_data.rec_ssh, lit_mod.test_data.ssh)[
-            2:
-        ]
-        metrics.append(dict(ckpt=ckpt, rmse=rmse, lx=lx, lt=lt, mu=mu, sig=sig))
-
-        if i == 0:
-            test_data = lit_mod.test_data
-            test_data = test_data.rename(rec_ssh=f"rec_ssh_{i}")
-        else:
-            test_data = test_data.assign(**{f"rec_ssh_{i}": lit_mod.test_data.rec_ssh})
-        test_data[f"rec_ssh_{i}"] = test_data[f"rec_ssh_{i}"].assign_attrs(
-            ckpt=str(ckpt)
-        )
-
-    metric_df = pd.DataFrame(metrics)
-    print(metric_df.to_markdown())
-    print(metric_df.describe().to_markdown())
-    metric_df.to_csv(save_path + "/metrics.csv")
-    test_data.to_netcdf(save_path + "ens_rec_ssh.nc")
-
-
-def add_geo_attrs(da):
-    da["lon"] = da.lon.assign_attrs(units="degrees_east")
-    da["lat"] = da.lat.assign_attrs(units="degrees_north")
-    return da
-
-
-def vort(da):
-    return mpcalc.vorticity(
-        *mpcalc.geostrophic_wind(
-            da.pipe(add_geo_attrs).assign_attrs(units="m").metpy.quantify()
-        )
-    ).metpy.dequantify()
-
-
-def geo_energy(da):
-    return np.hypot(*mpcalc.geostrophic_wind(da.pipe(add_geo_attrs))).metpy.dequantify()
-
-
-def best_ckpt(xp_dir):
-    ckpt_last = max(
-        (Path(xp_dir) / "checkpoints").glob("*.ckpt"), key=lambda p: p.stat().st_mtime
-    )
-    cbs = torch.load(ckpt_last)["callbacks"]
-    ckpt_cb = cbs[next(k for k in cbs.keys() if "ModelCheckpoint" in k)]
-    return ckpt_cb["best_model_path"]
