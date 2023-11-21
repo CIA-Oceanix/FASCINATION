@@ -57,13 +57,11 @@ class AcousticPredictor(pl.LightningModule):
         self.lr = lr
         self.T_max = T_max
 
-        self.reduce = ReduceDomain(2)
         self.conv1 = ConvBlock(input_depth, 96)
         self.conv2 = ConvBlock(96, 64)
         self.conv3 = ConvBlock(64, 32)
         self.conv4 = ConvBlock(32, 16)
         self.finalconv = ConvBlock(16, acoustic_variables)
-        self.out = IncreaseDomain(2)
 
     def forward(self, x):
         return self.finalconv(
@@ -85,8 +83,6 @@ class AcousticPredictor(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        # y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
-        # loss = 0.1*nn.MSELoss()(y_split[0], output_split[0]) + nn.MSELoss()(y_split[1], output_split[1])
         loss = nn.MSELoss()(y, output)
         self.log('train_loss', loss, on_step= False, on_epoch=True)
         return loss
@@ -109,9 +105,7 @@ class AcousticPredictor(pl.LightningModule):
             "cutoff_freq": 0.0,
             "ecs": 0.0
         }
-        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0], output_split[0]*10000)
-        test_loss["ecs"] = nn.MSELoss()(y_split[1], output_split[1]*210.16294821)
-        # for target, prediction, key in zip(y_split, output_split, test_loss.keys()):
-        #     test_loss[key] = (nn.MSELoss()(target, prediction).item())
+        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0]*10000, output_split[0]*10000)
+        test_loss["ecs"] = nn.MSELoss()(y_split[1]*670.25141631, output_split[1]*670.25141631)
         self.log_dict(test_loss, on_step= False, on_epoch=True)
         return test_loss

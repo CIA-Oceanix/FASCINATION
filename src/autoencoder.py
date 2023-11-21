@@ -13,9 +13,6 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 
-#version 0 de la loss où on prend en compte uniquement la loss de reconstruction avec une MSE, on regarde ni les gradients verticaux ni les métriques de 
-#reconstruction des paramètres acoustiques
-
 class Autoencoder(pl.LightningModule):
     def __init__(self, lr=1e-3):
         super(Autoencoder, self).__init__()

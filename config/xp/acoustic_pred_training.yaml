@@ -38,7 +38,7 @@ model:
   _target_: src.acoustic_predictor.AcousticPredictor
   input_depth: 107
   acoustic_variables: 2
-  lr: 0.001
+  lr: 0.005
   T_max: 10
 
 
