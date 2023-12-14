@@ -56,6 +56,7 @@ class AcousticPredictor(pl.LightningModule):
         super(AcousticPredictor, self).__init__()
         self.lr = lr
         self.T_max = T_max
+        self.test_data = None
 
         self.conv1 = ConvBlock(input_depth, 96)
         self.conv2 = ConvBlock(96, 64)
@@ -83,7 +84,7 @@ class AcousticPredictor(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss()(y, output)
+        loss = torch.sqrt(nn.MSELoss()(y, output))
         self.log('train_loss', loss, on_step= False, on_epoch=True)
         return loss
     
@@ -98,14 +99,28 @@ class AcousticPredictor(pl.LightningModule):
         return loss
     
     def test_step(self, batch, batch_idx):
+        if batch_idx == 0:
+            self.test_data = []
         x, y = batch
         output = self(x)
         y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
+        self.test_data.append(torch.stack([y, output], dim=1))
         test_loss = {
             "cutoff_freq": 0.0,
             "ecs": 0.0
         }
-        test_loss["cutoff_freq"] = nn.MSELoss()(y_split[0]*10000, output_split[0]*10000)
-        test_loss["ecs"] = nn.MSELoss()(y_split[1]*670.25141631, output_split[1]*670.25141631)
+        test_loss["cutoff_freq"] = torch.sqrt(nn.MSELoss()(y_split[0]*10000, output_split[0]*10000))
+        test_loss["ecs"] = torch.sqrt(nn.MSELoss()(y_split[1]*670.25141631, output_split[1]*670.25141631))
         self.log_dict(test_loss, on_step= False, on_epoch=True)
         return test_loss
+    
+    def on_test_end(self):
+
+        dm = self.trainer.datamodule
+        time, var, lat, lon = dm.test_time, dm.test_var, dm.test_lat, dm.test_lon
+
+        result_tensor = torch.cat([tensor.view(-1, 2, 2, 240, 240) for tensor in self.test_data], dim=0) #tester ce code, on met tous les tenseurs de la liste en un seul
+        # FAIRE LES TESTS DIRECTEMENT SUR LE SERVEUR
+        print(len(self.test_data))
+        print(self.test_data[0].shape)
+        print(len(result_tensor))
