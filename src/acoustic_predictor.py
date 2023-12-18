@@ -13,6 +13,9 @@ from typing import Any
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+import xarray as xr
+import pandas as pd
+from src.utils import psd_based_scores, rmse_based_scores
 
 
 class ConvBlock(pl.LightningModule):
@@ -113,14 +116,3 @@ class AcousticPredictor(pl.LightningModule):
         test_loss["ecs"] = torch.sqrt(nn.MSELoss()(y_split[1]*670.25141631, output_split[1]*670.25141631))
         self.log_dict(test_loss, on_step= False, on_epoch=True)
         return test_loss
-    
-    def on_test_end(self):
-
-        dm = self.trainer.datamodule
-        time, var, lat, lon = dm.test_time, dm.test_var, dm.test_lat, dm.test_lon
-
-        result_tensor = torch.cat([tensor.view(-1, 2, 2, 240, 240) for tensor in self.test_data], dim=0) #tester ce code, on met tous les tenseurs de la liste en un seul
-        # FAIRE LES TESTS DIRECTEMENT SUR LE SERVEUR
-        print(len(self.test_data))
-        print(self.test_data[0].shape)
-        print(len(result_tensor))
