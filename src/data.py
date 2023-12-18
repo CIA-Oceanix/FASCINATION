@@ -75,6 +75,11 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
         self.target = input_da[1]
         self.dl_kw = dl_kw
 
+        self.test_time = None
+        self.test_var = None
+        self.test_lat = None
+        self.test_lon = None
+
         self.train_ds = None
         self.val_ds = None
         self.test_ds = None
@@ -106,6 +111,10 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
             self.test_ds = AcousticPredictorDataset(
                 self.input.isel(time=test_da.indices), self.target.isel(time=test_da.indices)
             )
+            self.test_time = self.test_ds.variables["time"]
+            self.test_var = self.test_ds.variables["variable"]
+            self.test_lat = self.test_ds.variables["lat"]
+            self.test_lon = self.test_ds.variables["lon"]
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(self.train_ds, shuffle=True, **self.dl_kw)
