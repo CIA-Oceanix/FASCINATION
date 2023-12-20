@@ -68,7 +68,7 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         return TrainingItem._make((np.nan_to_num(self.da.celerity[index].data.astype(np.float32)), np.nan_to_num(self.da.celerity[index].data.astype(np.float32))))
     
-class AcousticPredictorDatamodule(pl.LightningDataModule):
+class BaseDatamodule(pl.LightningDataModule):
     def __init__(self, input_da, dl_kw):
         super().__init__()
         self.input = input_da[0]
@@ -87,7 +87,7 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
         self.is_data_normed = False
     
     def setup(self, stage):
-        random_dataset = AcousticPredictorDataset(self.input, self.target)
+        random_dataset =BaseDataset(self.input, self.target)
         train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
         if not self.is_data_normed:
             input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
@@ -98,17 +98,17 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
             self.is_data_normed = True
         
         if stage == 'fit':
-            self.train_ds = AcousticPredictorDataset(
+            self.train_ds = BaseDataset(
                 self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
                 )
-            self.val_ds = AcousticPredictorDataset(
+            self.val_ds = BaseDataset(
                 self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
             )
         if stage == 'test':
-            self.val_ds = AcousticPredictorDataset(
+            self.val_ds = BaseDataset(
                 self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
             )
-            self.test_ds = AcousticPredictorDataset(
+            self.test_ds = BaseDataset(
                 self.input.isel(time=test_da.indices), self.target.isel(time=test_da.indices)
             )
             self.test_time = self.test_ds.variables["time"]
@@ -135,7 +135,7 @@ class AcousticPredictorDatamodule(pl.LightningDataModule):
 
         return mean, std
 
-class AcousticPredictorDataset(torch.utils.data.Dataset):
+class BaseDataset(torch.utils.data.Dataset):
     def __init__(self, volume, variables):
         super().__init__()
         self.volume, self.variables = volume.transpose('time', 'z', 'lat', 'lon'), variables.to_array().transpose('time', 'variable', 'lat', 'lon')

@@ -55,7 +55,7 @@ def load_sound_speed_fields(path):
 
     return ssf.isel(time=shuffled_index) # shuffling data to better acount for seasonal variability
 
-def load_acoustic_variables(path1, path2):
+def load_ssf_acoustic_variables(path1, path2):
     ssf = xr.open_dataset(path1).transpose("time", "lat", "lon", "z")
     cutoff_ecs = xr.open_dataset(path2).transpose("time", "lat", "lon")
     

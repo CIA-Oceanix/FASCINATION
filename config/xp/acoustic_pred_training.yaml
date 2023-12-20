@@ -27,9 +27,9 @@ trainer:
       mode: min
 
 datamodule:
-  _target_: src.data.AcousticPredictorDatamodule
+  _target_: src.data.BaseDatamodule
   input_da: 
-    _target_: src.utils.load_acoustic_variables
+    _target_: src.utils.load_ssf_acoustic_variables
     path1: ${paths.sound}
     path2: ${paths.variables}
   dl_kw: {batch_size: 4, num_workers: 16}
