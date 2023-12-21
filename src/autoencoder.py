@@ -18,6 +18,8 @@ class AutoEncoder(pl.LightningModule):
         super(AutoEncoder, self).__init__()
         self.lr = lr
         self.acoustic_predictor = acoustic_predictor
+        if self.acoustic_predictor != None:
+            self.acoustic_predictor.eval()
 
         self.encoder = nn.Sequential(
             nn.Conv2d(107, 64, kernel_size=3, padding=1),
@@ -31,9 +33,7 @@ class AutoEncoder(pl.LightningModule):
         )
         
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(16, 32, kernel_size=2, stride=2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(32, 64, kernel_size=2, stride=2),
+            nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
             nn.ReLU(),
             nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
             nn.Sigmoid()
@@ -55,7 +55,7 @@ class AutoEncoder(pl.LightningModule):
 
         loss = torch.sqrt(nn.MSELoss()(output, x))
         if self.acoustic_predictor != None:
-            loss += torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y))
+            loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y))
         self.log('train_loss', loss, on_step= True, on_epoch=True)
         return loss
     
@@ -70,6 +70,6 @@ class AutoEncoder(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = torch.sqrt(nn.MSELoss()(output, y))
+        loss = torch.sqrt(nn.MSELoss()(output*(1552.54994512 - 472.33156028)+472.33156028, x*(1552.54994512 - 472.33156028)+472.33156028))
         self.log('test_loss', loss, on_step= False, on_epoch=True)
         return loss
