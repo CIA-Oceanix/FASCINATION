@@ -17,6 +17,8 @@ class AutoEncoder(pl.LightningModule):
     def __init__(self, lr=1e-3, acoustic_predictor=None):
         super(AutoEncoder, self).__init__()
         self.lr = lr
+        self.test_data = None
+
         self.acoustic_predictor = acoustic_predictor
         if self.acoustic_predictor != None:
             self.acoustic_predictor.eval()
@@ -51,8 +53,6 @@ class AutoEncoder(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        msk = y != 0 # pas forcément pertinent ? Essayer sans et avec: nn.MSELoss()(output[msk], y[msk])
-
         loss = torch.sqrt(nn.MSELoss()(output, x))
         if self.acoustic_predictor != None:
             loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y))
@@ -62,14 +62,16 @@ class AutoEncoder(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        msk = y != 0 # même chose, voir pertinence
         loss = torch.sqrt(nn.MSELoss()(output, x))
         self.log('val_loss', loss, on_step= False, on_epoch=True)
         return loss
     
     def test_step(self, batch, batch_idx):
+        if batch_idx == 0:
+            self.test_data = []
         x, y = batch
         output = self(x)
-        loss = torch.sqrt(nn.MSELoss()(output*(1552.54994512 - 472.33156028)+472.33156028, x*(1552.54994512 - 472.33156028)+472.33156028))
+        self.test_data.append(torch.stack([x, output], dim=1))
+        loss = torch.sqrt(nn.MSELoss()(output*(1552.54994512 - 1438)+1438, x*(1552.54994512 - 1438)+1438))
         self.log('test_loss', loss, on_step= False, on_epoch=True)
         return loss
