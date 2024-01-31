@@ -79,6 +79,7 @@ class BaseDatamodule(pl.LightningDataModule):
         self.test_var = None
         self.test_lat = None
         self.test_lon = None
+        self.test_z = None
 
         self.train_ds = None
         self.val_ds = None
@@ -87,12 +88,12 @@ class BaseDatamodule(pl.LightningDataModule):
         self.is_data_normed = False
     
     def setup(self, stage):
-        random_dataset =BaseDataset(self.input, self.target)
-        train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
         if not self.is_data_normed:
-            input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
-            #mean, std = self.norm_stats(input_train, target_train)
-            self.input = (self.input - 472.33156028)/(1552.54994512 - 472.33156028) # hard coded values for now because it saves computation time
+            random_dataset = BaseDataset(self.input, self.target)
+            train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
+            # input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
+            # mean, std = self.norm_stats(input_train, target_train)
+            self.input = (self.input - 1438)/(1552.54994512 - 1438) # min max normalization, hard coded values for now because it saves computation time
             self.target["cutoff_freq"] = (self.target["cutoff_freq"])/10000  
             self.target["ecs"] = (self.target["ecs"])/670.25141631
             self.is_data_normed = True
@@ -115,6 +116,7 @@ class BaseDatamodule(pl.LightningDataModule):
             self.test_var = self.test_ds.variables["variable"]
             self.test_lat = self.test_ds.variables["lat"]
             self.test_lon = self.test_ds.variables["lon"]
+            self.test_z = self.test_ds.volume["z"]
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(self.train_ds, shuffle=True, **self.dl_kw)
