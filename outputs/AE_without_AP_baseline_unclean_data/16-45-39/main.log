@@ -1,0 +1,23 @@
+[2024-01-24 16:45:49,253][torch.distributed.nn.jit.instantiator][INFO] - Created a temporary directory at /tmp/tmpbp86y8hz
+[2024-01-24 16:45:49,254][torch.distributed.nn.jit.instantiator][INFO] - Writing /tmp/tmpbp86y8hz/_remote_module_non_scriptable.py
+[2024-01-24 16:45:49,607][lightning_lite.utilities.seed][INFO] - Global seed set to 333
+[2024-01-24 16:45:49,755][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
+[2024-01-24 16:45:49,800][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
+[2024-01-24 16:45:49,800][pytorch_lightning.utilities.rank_zero][INFO] - IPU available: False, using: 0 IPUs
+[2024-01-24 16:45:49,800][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
+[2024-01-24 17:13:11,214][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+[2024-01-24 17:13:11,217][pytorch_lightning.callbacks.model_summary][INFO] - 
+  | Name               | Type              | Params
+---------------------------------------------------------
+0 | acoustic_predictor | AcousticPredictor | 171 K 
+1 | encoder            | Sequential        | 84.8 K
+2 | decoder            | Sequential        | 31.7 K
+---------------------------------------------------------
+288 K     Trainable params
+0         Non-trainable params
+288 K     Total params
+1.153     Total estimated model params size (MB)
+[2024-01-24 18:45:53,944][pytorch_lightning.utilities.rank_zero][INFO] - `Trainer.fit` stopped: `max_epochs=1000` reached.
+[2024-01-24 18:45:55,843][pytorch_lightning.utilities.rank_zero][INFO] - Restoring states from the checkpoint path at /sanssauvegarde/homes/l19yakho/FASCINATION/outputs/2024-01-24/16-45-39/AE_with_AP_training/checkpoints/val_loss=0.18-epoch=999.ckpt
+[2024-01-24 18:45:55,858][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]
+[2024-01-24 18:45:55,891][pytorch_lightning.utilities.rank_zero][INFO] - Loaded model weights from checkpoint at /sanssauvegarde/homes/l19yakho/FASCINATION/outputs/2024-01-24/16-45-39/AE_with_AP_training/checkpoints/val_loss=0.18-epoch=999.ckpt
