@@ -1,0 +1,2 @@
+- xp=AE_with_AP_training
+- trainer.max_epochs=1000

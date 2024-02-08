@@ -33,7 +33,7 @@ datamodule:
     _target_: src.utils.load_ssf_acoustic_variables
     path1: ${paths.sound}
     path2: ${paths.variables}
-  dl_kw: {batch_size: 4, num_workers: 16}
+  dl_kw: {batch_size: 4, num_workers: 4}
 
 model:
   _target_: src.autoencoder.AutoEncoder
