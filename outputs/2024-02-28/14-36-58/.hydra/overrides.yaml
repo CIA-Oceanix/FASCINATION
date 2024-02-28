@@ -1,0 +1,2 @@
+- xp=AE_without_AP_training
+- model.arch_shape='no_pool_4'

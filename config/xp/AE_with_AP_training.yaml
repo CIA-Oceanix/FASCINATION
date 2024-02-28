@@ -5,6 +5,9 @@ paths:
     variables: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_regrid_0_1000m.nc
     model_path: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/acoustic_pred_training/checkpoints/val_loss=0.02-epoch=929.ckpt
 
+normalization:
+  x_min: 1438
+  x_max: 1552.54994512
 
 trainer:
   _target_: pytorch_lightning.Trainer
@@ -13,12 +16,13 @@ trainer:
   devices: 1
   check_val_every_n_epoch: 1
   logger: 
-    _target_: pytorch_lightning.loggers.CSVLogger
+    #_target_: pytorch_lightning.loggers.CSVLogger
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
     save_dir: ${hydra:runtime.output_dir}
     name: ${hydra:runtime.choices.xp}
     version: ${model.arch_shape}
   min_epochs: 0
-  max_epochs: 2
+  max_epochs: 1000
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -34,11 +38,15 @@ datamodule:
     path1: ${paths.sound}
     path2: ${paths.variables}
   dl_kw: {batch_size: 4, num_workers: 4}
+  x_min: ${normalization.x_min}
+  x_max: ${normalization.x_max}
 
 model:
   _target_: src.autoencoder.AutoEncoder
+  x_min: ${normalization.x_min}
+  x_max: ${normalization.x_max}
   lr: 0.001
-  arch_shape: '32_120'
+  arch_shape: 'no_pool_4'
   acoustic_predictor:
     _target_: src.acoustic_predictor.AcousticPredictor.load_from_checkpoint
     checkpoint_path: ${paths.model_path}

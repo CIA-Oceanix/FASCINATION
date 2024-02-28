@@ -15,7 +15,7 @@ import pytorch_lightning as pl
 from torchsummary import summary
 
 class AutoEncoder(pl.LightningModule):
-    def __init__(self, lr=1e-3, arch_shape = "16_60", acoustic_predictor=None):
+    def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60", acoustic_predictor=None):
         super(AutoEncoder, self).__init__()
         self.lr = lr
         self.test_data = None
@@ -25,6 +25,9 @@ class AutoEncoder(pl.LightningModule):
             self.acoustic_predictor.eval()
 
         self.architecture(arch_shape)
+        
+        self.x_min = x_min
+        self.x_max = x_max
         
         # if torch.cuda.is_available():
         #     self.input_da.to('cuda')
@@ -63,7 +66,7 @@ class AutoEncoder(pl.LightningModule):
         x, y = batch
         output = self(x)
         self.test_data.append(torch.stack([x, output], dim=1))
-        loss = torch.sqrt(nn.MSELoss()(output*(1552.54994512 - 1438)+1438, x*(1552.54994512 - 1438)+1438))
+        loss = torch.sqrt(nn.MSELoss()(output*(self.x_max - self.x_min)+self.x_min, x*(self.x_max - self.x_min)+self.x_min))
         self.log('test_loss', loss, on_step= False, on_epoch=True)
         return loss
 
@@ -161,6 +164,29 @@ class AutoEncoder(pl.LightningModule):
                 nn.ReLU(),
                 nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
                 nn.Sigmoid()
+            )
+            
+        if arch_shape == "no_pool_4" :
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels=107, out_channels=64, kernel_size=1, stride=1, padding=0),  # Conv1
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels=64, out_channels=32, kernel_size=1, stride=1, padding=0), # Conv2
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels=32, out_channels=16, kernel_size=1, stride=1, padding=0), # Conv3
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels=16, out_channels=4, kernel_size=1, stride=1, padding=0), # Conv4
+                nn.ReLU(inplace=True)
+            )
+            # Decoder layers
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(in_channels=4, out_channels=16, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose1
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(in_channels=16, out_channels=32, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose2
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(in_channels=32, out_channels=64, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose3
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(in_channels=64, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose4
+                nn.Sigmoid()  # Output activation function
             )
             
             

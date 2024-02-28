@@ -1,0 +1,16 @@
+[2024-02-28 17:52:05,561][lightning_fabric.utilities.seed][INFO] - Seed set to 333
+[2024-02-28 17:52:05,960][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
+[2024-02-28 17:52:06,008][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
+[2024-02-28 17:52:06,008][pytorch_lightning.utilities.rank_zero][INFO] - IPU available: False, using: 0 IPUs
+[2024-02-28 17:52:06,008][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
+[2024-02-28 17:53:18,426][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [2]
+[2024-02-28 17:53:18,430][pytorch_lightning.callbacks.model_summary][INFO] - 
+  | Name    | Type       | Params
+---------------------------------------
+0 | encoder | Sequential | 86.2 K
+1 | decoder | Sequential | 32.3 K
+---------------------------------------
+118 K     Trainable params
+0         Non-trainable params
+118 K     Total params
+0.474     Total estimated model params size (MB)

@@ -1,10 +1,10 @@
-[2024-02-20 12:02:33,441][lightning_fabric.utilities.seed][INFO] - Seed set to 333
-[2024-02-20 12:02:33,697][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
-[2024-02-20 12:02:33,724][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
-[2024-02-20 12:02:33,724][pytorch_lightning.utilities.rank_zero][INFO] - IPU available: False, using: 0 IPUs
-[2024-02-20 12:02:33,724][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
-[2024-02-20 12:03:51,131][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-[2024-02-20 12:03:51,135][pytorch_lightning.callbacks.model_summary][INFO] - 
+[2024-02-28 15:17:16,031][lightning_fabric.utilities.seed][INFO] - Seed set to 333
+[2024-02-28 15:17:16,627][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
+[2024-02-28 15:17:16,673][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
+[2024-02-28 15:17:16,673][pytorch_lightning.utilities.rank_zero][INFO] - IPU available: False, using: 0 IPUs
+[2024-02-28 15:17:16,673][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
+[2024-02-28 15:18:08,083][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [2]
+[2024-02-28 15:18:08,085][pytorch_lightning.callbacks.model_summary][INFO] - 
   | Name    | Type       | Params
 ---------------------------------------
 0 | encoder | Sequential | 86.2 K
@@ -14,7 +14,3 @@
 0         Non-trainable params
 118 K     Total params
 0.474     Total estimated model params size (MB)
-[2024-02-20 14:48:51,818][pytorch_lightning.utilities.rank_zero][INFO] - `Trainer.fit` stopped: `max_epochs=1000` reached.
-[2024-02-20 14:48:51,970][pytorch_lightning.utilities.rank_zero][INFO] - Restoring states from the checkpoint path at /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/2024-02-20/12-02-30/AE_without_AP_training/checkpoints/val_loss=0.80-epoch=988.ckpt
-[2024-02-20 14:48:51,984][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
-[2024-02-20 14:48:51,991][pytorch_lightning.utilities.rank_zero][INFO] - Loaded model weights from the checkpoint at /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/2024-02-20/12-02-30/AE_without_AP_training/checkpoints/val_loss=0.80-epoch=988.ckpt

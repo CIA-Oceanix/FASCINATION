@@ -112,11 +112,12 @@ hydra:
     hydra:
     - hydra.mode=RUN
     task:
+    - xp=AE_without_AP_training
     - model.arch_shape='4_15'
   job:
     name: main
     chdir: null
-    override_dirname: model.arch_shape='4_15'
+    override_dirname: model.arch_shape='4_15',xp=AE_without_AP_training
     id: ???
     num: ???
     config_name: main
@@ -141,7 +142,7 @@ hydra:
     - path: ''
       schema: structured
       provider: schema
-    output_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/2024-02-20/12-02-30
+    output_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/2024-02-28/15-17-12
     choices:
       xp: AE_without_AP_training
       hydra/env: default

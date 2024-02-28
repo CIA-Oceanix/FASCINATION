@@ -1,5 +1,5 @@
 entrypoints: ???
 defaults:
-  - xp: AE_without_AP_training
+  - xp: ???
   - _self_
 
