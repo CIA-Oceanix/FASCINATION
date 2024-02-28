@@ -7,12 +7,13 @@ from collections import namedtuple
 TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
 
 class AutoEncoderDatamodule(pl.LightningDataModule):
-    def __init__(self, input_da, domains, dl_kw):
+    def __init__(self, input_da, domains, dl_kw, x_min = 1438, x_max = 1552.54994512):
         super().__init__()
         self.input_da = input_da
-
         self.domains = domains
         self.dl_kw = dl_kw
+        self.x_min = x_min
+        self.x_max = x_max
 
         self.train_ds = None
         self.val_ds = None
@@ -25,9 +26,10 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
     def setup(self, stage):
         if not self.is_data_normed:
             train_data = self.input_da.isel(self.domains['train'])
-            for var in self.input_da.data_vars:
-                mean, std = self.norm_stats(train_data[var])
-                self.input_da = (self.input_da - mean)/std
+            # for var in self.input_da.data_vars:
+            #     mean, std = self.norm_stats(train_data[var])
+            #     self.input_da = (self.input_da - mean)/std
+            self.input_da =  (self.input_da - self.x_min)/(self.x_max - self.x_min)
             self.is_data_normed = True
 
         if stage == "fit":
@@ -72,11 +74,14 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
         return TrainingItem._make((np.nan_to_num(self.da.celerity[index].data.astype(np.float32)), np.nan_to_num(self.da.celerity[index].data.astype(np.float32))))
     
 class BaseDatamodule(pl.LightningDataModule):
-    def __init__(self, input_da, dl_kw):
+    def __init__(self, input_da, dl_kw, x_min = 1438, x_max = 1552.54994512):
         super().__init__()
         self.input = input_da[0]
         self.target = input_da[1]
         self.dl_kw = dl_kw
+        
+        self.x_min = x_min
+        self.x_max = x_max
 
         self.test_time = None
         self.test_var = None
@@ -89,6 +94,7 @@ class BaseDatamodule(pl.LightningDataModule):
         self.test_ds = None
 
         self.is_data_normed = False
+        
     
     def setup(self, stage):
         random_dataset = BaseDataset(self.input, self.target)
@@ -96,7 +102,7 @@ class BaseDatamodule(pl.LightningDataModule):
         if not self.is_data_normed:
             # input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
             # mean, std = self.norm_stats(input_train, target_train)
-            self.input = (self.input - 1438)/(1552.54994512 - 1438) # min max normalization, hard coded values for now because it saves computation time
+            self.input = (self.input - self.x_min)/(self.x_max - self.x_min) # min max normalization, hard coded values for now because it saves computation time
             self.target["cutoff_freq"] = (self.target["cutoff_freq"])/10000  
             self.target["ecs"] = (self.target["ecs"])/670.25141631
             self.is_data_normed = True

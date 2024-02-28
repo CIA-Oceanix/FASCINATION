@@ -3,6 +3,10 @@
 paths:
     sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
 
+normalization:
+  x_min: 1438
+  x_max: 1552.54994512
+
 trainer:
   _target_: pytorch_lightning.Trainer
   inference_mode: False
@@ -13,7 +17,7 @@ trainer:
     _target_: pytorch_lightning.loggers.CSVLogger
     save_dir: ${hydra:runtime.output_dir}
     name: ${hydra:runtime.choices.xp}
-    version: ''
+    version: ${model.arch_shape}
   min_epochs: 0
   max_epochs: 1000
   callbacks:
@@ -37,11 +41,15 @@ datamodule:
     test: 
       time: {_target_: builtins.slice,  _args_: [331, 365]}
   dl_kw: {batch_size: 4, num_workers: 4}
+  x_min: ${normalization.x_min}
+  x_max: ${normalization.x_max}
 
 model:
   _target_: src.autoencoder.AutoEncoder
+  x_min: ${normalization.x_min}
+  x_max: ${normalization.x_max}
   lr: 0.001
-  arch_shape: '8_30'
+  arch_shape: 'no_pool_4'
 
 
 entrypoints:

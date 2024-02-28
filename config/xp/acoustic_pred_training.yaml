@@ -4,6 +4,10 @@ paths:
     sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
     variables: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_regrid_0_1000m.nc
 
+normalization:
+  x_min: 1438
+  x_max: 1552.54994512
+
 
 trainer:
   _target_: pytorch_lightning.Trainer
@@ -33,6 +37,8 @@ datamodule:
     path1: ${paths.sound}
     path2: ${paths.variables}
   dl_kw: {batch_size: 4, num_workers: 4}
+  x_min: ${normalization.x_min}
+  x_max: ${normalization.x_max}
 
 model:
   _target_: src.acoustic_predictor.AcousticPredictor
@@ -40,6 +46,7 @@ model:
   acoustic_variables: 2
   lr: 0.005
   T_max: 10
+
 
 
 entrypoints:
