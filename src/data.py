@@ -10,6 +10,7 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
     def __init__(self, input_da, domains, dl_kw):
         super().__init__()
         self.input_da = input_da
+
         self.domains = domains
         self.dl_kw = dl_kw
 
@@ -18,6 +19,8 @@ class AutoEncoderDatamodule(pl.LightningDataModule):
         self.test_ds = None
 
         self.is_data_normed = False
+        
+            
 
     def setup(self, stage):
         if not self.is_data_normed:
@@ -88,9 +91,9 @@ class BaseDatamodule(pl.LightningDataModule):
         self.is_data_normed = False
     
     def setup(self, stage):
+        random_dataset = BaseDataset(self.input, self.target)
+        train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
         if not self.is_data_normed:
-            random_dataset = BaseDataset(self.input, self.target)
-            train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
             # input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
             # mean, std = self.norm_stats(input_train, target_train)
             self.input = (self.input - 1438)/(1552.54994512 - 1438) # min max normalization, hard coded values for now because it saves computation time
@@ -106,9 +109,9 @@ class BaseDatamodule(pl.LightningDataModule):
                 self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
             )
         if stage == 'test':
-            self.val_ds = BaseDataset(
-                self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
-            )
+            # self.val_ds = BaseDataset(
+            #     self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
+            # )
             self.test_ds = BaseDataset(
                 self.input.isel(time=test_da.indices), self.target.isel(time=test_da.indices)
             )

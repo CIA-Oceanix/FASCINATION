@@ -1,7 +1,7 @@
 # @package _global_
 
 paths:
-    sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_0_1000m_regrid.nc
+    sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
 
 trainer:
   _target_: pytorch_lightning.Trainer
@@ -15,7 +15,7 @@ trainer:
     name: ${hydra:runtime.choices.xp}
     version: ''
   min_epochs: 0
-  max_epochs: 300
+  max_epochs: 1000
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -41,6 +41,7 @@ datamodule:
 model:
   _target_: src.autoencoder.AutoEncoder
   lr: 0.001
+  arch_shape: '8_30'
 
 
 entrypoints:
