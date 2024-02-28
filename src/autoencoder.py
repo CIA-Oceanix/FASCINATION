@@ -12,9 +12,10 @@ Created on Mon Aug 28 10:57:22 2023
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+from torchsummary import summary
 
 class AutoEncoder(pl.LightningModule):
-    def __init__(self, lr=1e-3, acoustic_predictor=None):
+    def __init__(self, lr=1e-3, arch_shape = "16_60", acoustic_predictor=None):
         super(AutoEncoder, self).__init__()
         self.lr = lr
         self.test_data = None
@@ -23,23 +24,13 @@ class AutoEncoder(pl.LightningModule):
         if self.acoustic_predictor != None:
             self.acoustic_predictor.eval()
 
-        self.encoder = nn.Sequential(
-            nn.Conv2d(107, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(64, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(32, 16, kernel_size=3, padding=1),
-            nn.ReLU()
-        )
+        self.architecture(arch_shape)
         
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
-            nn.Sigmoid()
-        )
+        # if torch.cuda.is_available():
+        #     self.input_da.to('cuda')
+        # self.log_model_summary()
+        
+
 
     def forward(self, x):
         encoded = self.encoder(x)
@@ -55,7 +46,7 @@ class AutoEncoder(pl.LightningModule):
         output = self(x)
         loss = torch.sqrt(nn.MSELoss()(output, x))
         if self.acoustic_predictor != None:
-            loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y))
+            loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y[:,:2,:,:]))
         self.log('train_loss', loss, on_step= True, on_epoch=True)
         return loss
     
@@ -75,3 +66,103 @@ class AutoEncoder(pl.LightningModule):
         loss = torch.sqrt(nn.MSELoss()(output*(1552.54994512 - 1438)+1438, x*(1552.54994512 - 1438)+1438))
         self.log('test_loss', loss, on_step= False, on_epoch=True)
         return loss
+
+
+    def architecture(self, arch_shape):
+        
+        
+        if arch_shape == "32_120": 
+            
+            self.encoder = nn.Sequential(
+                nn.Conv2d(107, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                # nn.Conv2d(64, 32, kernel_size=3, padding=1),
+                # nn.ReLU(),
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
+                nn.Sigmoid()
+            )
+                    
+                    
+        if arch_shape == "16_60": 
+            
+            self.encoder = nn.Sequential(
+                nn.Conv2d(107, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(64, 32, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(32, 16, kernel_size=3, padding=1),
+                nn.ReLU()
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
+                nn.ReLU(),
+                nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
+                nn.Sigmoid()
+            )
+            
+        if arch_shape == "8_30": 
+            
+            self.encoder = nn.Sequential(
+                nn.Conv2d(107, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(64, 32, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(32, 16, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(16, 8, kernel_size=3, padding=1),
+                nn.ReLU()
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(8, 16, kernel_size=2, stride=2),
+                nn.ReLU(),
+                nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
+                nn.ReLU(),
+                nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
+                nn.Sigmoid()
+            )
+            
+        if arch_shape == "4_15": 
+            
+            self.encoder = nn.Sequential(
+                nn.Conv2d(107, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(64, 32, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(32, 16, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(16, 8, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(8, 4, kernel_size=3, padding=1),
+                nn.ReLU()
+                
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(4, 8, kernel_size=2, stride=2),
+                nn.ReLU(),
+                nn.ConvTranspose2d(8, 16, kernel_size=2, stride=2),
+                nn.ReLU(),
+                nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
+                nn.ReLU(),
+                nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
+                nn.Sigmoid()
+            )
+            
+            
+    def log_model_summary(self):
+        self.log(summary(self,input_size = (107,240,240)))

@@ -87,17 +87,17 @@ class AcousticPredictor(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = torch.sqrt(nn.MSELoss()(y, output))
+        loss = torch.sqrt(nn.MSELoss()(y[:,:2,:,:], output))
         self.log('train_loss', loss, on_step= False, on_epoch=True)
         return loss
     
-    def training_epoch_end(self, outputs):
-        self.scheduler.step()
+    # def on_train_epoch_end(self, outputs):
+    #     self.scheduler.step()
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = nn.MSELoss()(output, y)
+        loss = nn.MSELoss()(output, y[:,:2,:,:])
         self.log('val_loss', loss, on_step= False, on_epoch=True)
         return loss
     
@@ -107,7 +107,7 @@ class AcousticPredictor(pl.LightningModule):
         x, y = batch
         output = self(x)
         y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
-        self.test_data.append(torch.stack([y, output], dim=1))
+        self.test_data.append(torch.stack([y[:,:2,:,:], output], dim=1))
         test_loss = {
             "cutoff_freq": 0.0,
             "ecs": 0.0

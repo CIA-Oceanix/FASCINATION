@@ -1,9 +1,9 @@
 # @package _global_
 
 paths:
-    sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_0_1000m_regrid.nc
-    variables: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_0_1000m_regrid.nc
-    model_path: /sanssauvegarde/homes/l19yakho/FASCINATION/outputs/2023-11-16/17-07-10/acoustic_pred_training/checkpoints/val_loss=0.02-epoch=965.ckpt
+    sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+    variables: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_regrid_0_1000m.nc
+    model_path: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/acoustic_pred_training/checkpoints/val_loss=0.02-epoch=929.ckpt
 
 
 trainer:
@@ -16,9 +16,9 @@ trainer:
     _target_: pytorch_lightning.loggers.CSVLogger
     save_dir: ${hydra:runtime.output_dir}
     name: ${hydra:runtime.choices.xp}
-    version: ''
+    version: ${model.arch_shape}
   min_epochs: 0
-  max_epochs: 50
+  max_epochs: 2
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -38,6 +38,7 @@ datamodule:
 model:
   _target_: src.autoencoder.AutoEncoder
   lr: 0.001
+  arch_shape: '32_120'
   acoustic_predictor:
     _target_: src.acoustic_predictor.AcousticPredictor.load_from_checkpoint
     checkpoint_path: ${paths.model_path}
