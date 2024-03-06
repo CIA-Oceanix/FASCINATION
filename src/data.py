@@ -102,6 +102,8 @@ class BaseDatamodule(pl.LightningDataModule):
         if not self.is_data_normed:
             # input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
             # mean, std = self.norm_stats(input_train, target_train)
+            if self.x_max is None or self.x_min is None:
+                self.x_min, self.x_max = np.nanmin(self.input.celerity.values), np.nanmax(self.input.celerity.values)
             self.input = (self.input - self.x_min)/(self.x_max - self.x_min) # min max normalization, hard coded values for now because it saves computation time
             self.target["cutoff_freq"] = (self.target["cutoff_freq"])/10000  
             self.target["ecs"] = (self.target["ecs"])/670.25141631

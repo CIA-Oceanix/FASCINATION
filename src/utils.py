@@ -51,6 +51,7 @@ def triang_lr_adam(lit_mod, lr_min=5e-5, lr_max=3e-3, nsteps=200):
 
 def load_sound_speed_fields(path):
     ssf = xr.open_dataset(path).transpose("time", "z", "lat", "lon")
+    ##TODO: retrieve the shuffled index
     shuffled_index = np.random.permutation(len(ssf.time))
 
     return ssf.isel(time=shuffled_index) # shuffling data to better acount for seasonal variability
