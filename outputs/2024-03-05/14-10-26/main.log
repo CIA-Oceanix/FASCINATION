@@ -1,0 +1,17 @@
+[2024-03-05 14:10:36,874][lightning_fabric.utilities.seed][INFO] - Seed set to 333
+[2024-03-05 14:10:37,800][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
+[2024-03-05 14:10:37,917][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
+[2024-03-05 14:10:37,917][pytorch_lightning.utilities.rank_zero][INFO] - IPU available: False, using: 0 IPUs
+[2024-03-05 14:10:37,917][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
+[2024-03-05 14:23:09,970][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0,1,2]
+[2024-03-05 14:23:09,981][pytorch_lightning.callbacks.model_summary][INFO] - 
+  | Name               | Type              | Params
+---------------------------------------------------------
+0 | acoustic_predictor | AcousticPredictor | 171 K 
+1 | encoder            | Sequential        | 9.6 K 
+2 | decoder            | Sequential        | 9.7 K 
+---------------------------------------------------------
+190 K     Trainable params
+0         Non-trainable params
+190 K     Total params
+0.764     Total estimated model params size (MB)
