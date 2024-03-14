@@ -13,6 +13,7 @@ do
     #echo model.arch_shape="$arch"
     CUDA_VISIBLE_DEVICES=0 krenew python main.py xp=AE_without_AP_training model.arch_shape="'$arch'"
     CUDA_VISIBLE_DEVICES=1 krenew python main.py xp=AE_with_AP_training model.arch_shape="'$arch'"
+
     # echo "$gpu[$i]"
 
 done
