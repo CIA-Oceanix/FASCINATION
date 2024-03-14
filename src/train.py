@@ -19,7 +19,7 @@ def base_training(trainer, dm, lit_mod, test_dm=None, ckpt=None):
                             col_names = ["input_size","output_size","num_params","params_percent","mult_adds"], 
                             verbose = 1)
 
-    trainer.logger.experiment.log_hparams(dict(summary = str(model_summary)))
+    #trainer.logger.experiment.log_hparams(dict(summary = str(model_summary)))
     
     
     trainer.fit(lit_mod, datamodule=dm, ckpt_path=ckpt)
@@ -31,6 +31,6 @@ def base_training(trainer, dm, lit_mod, test_dm=None, ckpt=None):
     trainer.callbacks = []
     trainer.test(lit_mod, datamodule=test_dm, ckpt_path=best_ckpt_path)
     
-    # with open(f"{trainer.logger.log_dir}my_module_log.log", 'w+') as f:
-    #     report = summary(lit_mod,input_size = (107,240,240), device = lit_mod.device.type)
-    #     f.write(str(report))
+    with open(f"{trainer.logger.log_dir}/model_summary.log", 'w+') as f:
+        f.write(str(model_summary))
+

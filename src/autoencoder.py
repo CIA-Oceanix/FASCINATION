@@ -15,11 +15,11 @@ import pytorch_lightning as pl
 from torchsummary import summary
 
 class AutoEncoder(pl.LightningModule):
-    def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60", acoustic_predictor=None):
+    def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60",final_act_func = 'sigmoid',  acoustic_predictor=None):
         super(AutoEncoder, self).__init__()
         self.lr = lr
         self.test_data = None
-
+        self.final_act_func = final_act_func
         self.acoustic_predictor = acoustic_predictor
         if self.acoustic_predictor != None:
             self.acoustic_predictor.eval()
@@ -41,7 +41,8 @@ class AutoEncoder(pl.LightningModule):
         return decoded
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr)
+        ##TODO use Adamw
         return optimizer
     
     def training_step(self, batch, batch_idx):
@@ -73,6 +74,10 @@ class AutoEncoder(pl.LightningModule):
 
     def architecture(self, arch_shape):
         
+        if self.final_act_func == 'sigmoid':
+            final_act_func = nn.Sigmoid()
+        elif self.final_act_func == 'relu':
+            final_act_func = nn.ReLU()
         
         if arch_shape == "32_120": 
             
@@ -136,7 +141,8 @@ class AutoEncoder(pl.LightningModule):
             )
             
         if arch_shape == "4_15": 
-            
+            ###TODO: put batchnorm
+            ###TODO check diminution kernel dans convo
             self.encoder = nn.Sequential(
                 nn.Conv2d(107, 64, kernel_size=3, padding=1),
                 nn.ReLU(),
@@ -151,10 +157,11 @@ class AutoEncoder(pl.LightningModule):
                 nn.ReLU(),
                 nn.MaxPool2d(kernel_size=2, stride=2),
                 nn.Conv2d(8, 4, kernel_size=3, padding=1),
-                nn.ReLU()
-                
+                nn.ReLU() 
             )
             
+            ###TODO: enlever ReLU
+            ###TODO check stride
             self.decoder = nn.Sequential(
                 nn.ConvTranspose2d(4, 8, kernel_size=2, stride=2),
                 nn.ReLU(),
@@ -163,8 +170,45 @@ class AutoEncoder(pl.LightningModule):
                 nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
                 nn.ReLU(),
                 nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
-                nn.Sigmoid()
+                nn.Sigmoid() ###! sortie [0;1] ? test softplus, htgt, relu
             )
+            
+                      
+        
+        
+        if arch_shape == "4_15_test": 
+            ###TODO: put batchnorm
+            ###TODO check diminution kernel dans convo
+            self.encoder = nn.Sequential(
+                nn.Conv2d(107, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(64, 32, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(32, 16, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(16, 8, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(8, 4, kernel_size=3, padding=1)
+                #nn.ReLU()
+                
+            )
+            ###TODO: enlever ReLU
+            ###TODO check stride
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(4, 8, kernel_size=2, stride=2),
+                #nn.ReLU(),
+                nn.ConvTranspose2d(8, 16, kernel_size=2, stride=2),
+                #nn.ReLU(),
+                nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
+                #nn.ReLU(),
+                nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
+                final_act_func ###* sigmoid ok si normalization, valeur entre 0 et 1
+            )
+            
             
         if arch_shape == "no_pool_4" :
             self.encoder = nn.Sequential(
@@ -188,7 +232,16 @@ class AutoEncoder(pl.LightningModule):
                 nn.ConvTranspose2d(in_channels=64, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose4
                 nn.Sigmoid()  # Output activation function
             )
-            
+    
+        if arch_shape == "pca_4" :
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels=107, out_channels=4, kernel_size=1, stride=1, padding=0)  # Conv1
+            )
+            # Decoder layers
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(in_channels=4, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose1
+                final_act_func # Output activation function
+            )
             
     def log_model_summary(self):
         self.log(summary(self,input_size = (107,240,240)))

@@ -4,8 +4,8 @@ paths:
     sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
 
 normalization:
-  x_min: 1438
-  x_max: 1552.54994512
+  x_min: 1459.0439165829073
+  x_max: 1545.8698054910844
 
 trainer:
   _target_: pytorch_lightning.Trainer
@@ -14,10 +14,12 @@ trainer:
   devices: 1
   check_val_every_n_epoch: 1
   logger: 
-    _target_: pytorch_lightning.loggers.CSVLogger
+    #_target_: pytorch_lightning.loggers.CSVLogger
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
     save_dir: ${hydra:runtime.output_dir}
     name: ${hydra:runtime.choices.xp}
     version: ${model.arch_shape}
+    sub_dir: ${model.final_act_func}
   min_epochs: 0
   max_epochs: 1000
   callbacks:
@@ -50,6 +52,7 @@ model:
   x_max: ${normalization.x_max}
   lr: 0.001
   arch_shape: 'no_pool_4'
+  final_act_func: sigmoid  #sigmoid, relu
 
 
 entrypoints:

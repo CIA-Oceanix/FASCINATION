@@ -1,0 +1,20 @@
+[2024-03-11 14:53:21,512][lightning_fabric.utilities.seed][INFO] - Seed set to 333
+[2024-03-11 14:53:21,772][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
+[2024-03-11 14:53:21,796][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
+[2024-03-11 14:53:21,796][pytorch_lightning.utilities.rank_zero][INFO] - IPU available: False, using: 0 IPUs
+[2024-03-11 14:53:21,796][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
+[2024-03-11 14:54:09,981][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [2]
+[2024-03-11 14:54:09,983][pytorch_lightning.callbacks.model_summary][INFO] - 
+  | Name               | Type              | Params
+---------------------------------------------------------
+0 | acoustic_predictor | AcousticPredictor | 171 K 
+1 | encoder            | Sequential        | 86.2 K
+2 | decoder            | Sequential        | 32.3 K
+---------------------------------------------------------
+290 K     Trainable params
+0         Non-trainable params
+290 K     Total params
+1.161     Total estimated model params size (MB)
+[2024-03-11 14:54:47,621][pytorch_lightning.utilities.rank_zero][INFO] - Restoring states from the checkpoint path at /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/2024-03-11/14-53-19/AE_with_AP_training/4_15_no_relu/checkpoints/val_loss=0.09-epoch=06.ckpt
+[2024-03-11 14:54:47,641][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [2]
+[2024-03-11 14:54:47,644][pytorch_lightning.utilities.rank_zero][INFO] - Loaded model weights from the checkpoint at /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/2024-03-11/14-53-19/AE_with_AP_training/4_15_no_relu/checkpoints/val_loss=0.09-epoch=06.ckpt
