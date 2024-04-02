@@ -15,14 +15,14 @@ import pytorch_lightning as pl
 from torchsummary import summary
 
 class AutoEncoder(pl.LightningModule):
-    def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60",final_act_func = 'sigmoid',  acoustic_predictor=None):
+    def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60",final_act_func = 'sigmoid',  acoustic_predictor=None, accoustic_training = False):
         super(AutoEncoder, self).__init__()
         self.lr = lr
         self.test_data = None
         self.final_act_func = final_act_func
         self.acoustic_predictor = acoustic_predictor
-        if self.acoustic_predictor != None:
-            self.acoustic_predictor.eval()
+        self.acoustic_predictor.eval()
+        self.accoustic_training = accoustic_training
 
         self.architecture(arch_shape)
         
@@ -49,16 +49,26 @@ class AutoEncoder(pl.LightningModule):
         x, y = batch
         output = self(x)
         loss = torch.sqrt(nn.MSELoss()(output, x))
-        if self.acoustic_predictor != None:
-            loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y[:,:2,:,:]))
+        self.log('train_loss_AE', loss, on_step= True, on_epoch=True)
+        ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,-1,:,:], y[:,1,:,:]))
+
+            #cut_off_rmse = = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,1,:,:], y[:,1,:,:]))
+            #loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y[:,:2,:,:]))
+        if self.accoustic_training != None:
+                loss = loss + ecs_rmse
         self.log('train_loss', loss, on_step= True, on_epoch=True)
+        self.log('train_ECS_rmse', ecs_rmse, on_step= True, on_epoch=True)
+
         return loss
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
         loss = torch.sqrt(nn.MSELoss()(output, x))
+        ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,1,:,:], y[:,1,:,:]))
+        
         self.log('val_loss', loss, on_step= False, on_epoch=True)
+        self.log('val_ECS_rmse', ecs_rmse, on_step= True, on_epoch=True)
         return loss
     
     def test_step(self, batch, batch_idx):
@@ -67,8 +77,12 @@ class AutoEncoder(pl.LightningModule):
         x, y = batch
         output = self(x)
         self.test_data.append(torch.stack([x, output], dim=1))
-        loss = torch.sqrt(nn.MSELoss()(output*(self.x_max - self.x_min)+self.x_min, x*(self.x_max - self.x_min)+self.x_min))
+        loss = torch.sqrt(nn.MSELoss()(output*(self.x_max - self.x_min)+self.x_min, x*(self.x_max - self.x_min)+self.x_min))        
+        ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,1,:,:], y[:,1,:,:]))
+        
+        self.log('test_ecs_rmse_normalized', ecs_rmse, on_step= False, on_epoch=True)
         self.log('test_loss', loss, on_step= False, on_epoch=True)
+
         return loss
 
 
@@ -209,6 +223,41 @@ class AutoEncoder(pl.LightningModule):
                 final_act_func ###* sigmoid ok si normalization, valeur entre 0 et 1
             )
             
+        if arch_shape == "4_4": 
+            ###TODO: put batchnorm
+            ###TODO check diminution kernel dans convo
+            self.encoder = nn.Sequential(
+                nn.Conv2d(107, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(64, 32, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(32, 16, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(16, 8, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=2, stride=2),
+                nn.Conv2d(8, 4, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(kernel_size=4, stride=3)
+                #nn.ReLU()
+                
+            )
+            ###TODO: enlever ReLU
+            ###TODO check stride
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(4, 4, kernel_size=4, stride=3, output_padding=2), ##! check if output_padding makes sense
+                nn.ConvTranspose2d(4, 8, kernel_size=2, stride=2),
+                #nn.ReLU(),
+                nn.ConvTranspose2d(8, 16, kernel_size=2, stride=2),
+                #nn.ReLU(),
+                nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
+                #nn.ReLU(),
+                nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
+                final_act_func ###* sigmoid ok si normalization, valeur entre 0 et 1
+            )
             
         if arch_shape == "no_pool_4" :
             self.encoder = nn.Sequential(

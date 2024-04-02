@@ -2,6 +2,8 @@
 
 paths:
     sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+    accoustic: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_regrid_0_1000m.nc
+    acc_model_path: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/ap_training/acoustic_pred_training/checkpoints/val_loss=0.02-epoch=951.ckpt
 
 normalization:
   x_min: 1459.0439165829073
@@ -16,12 +18,14 @@ trainer:
   logger: 
     #_target_: pytorch_lightning.loggers.CSVLogger
     _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
-    save_dir: ${hydra:runtime.output_dir}
-    name: ${hydra:runtime.choices.xp}
-    version: ${model.arch_shape}
-    sub_dir: ${model.final_act_func}
+    #save_dir: ${hydra:runtime.output_dir}
+    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/  #AE_without_AP/
+    #name: ${hydra:runtime.choices.xp}
+    name: ${model.arch_shape}_${model.final_act_func}_lr_${model.lr}
+    version: ${now:%Y-%m-%d_%H-%M}
+    # sub_dir: ${model.final_act_func}_lr_${model.lr}
   min_epochs: 0
-  max_epochs: 1000
+  max_epochs: 25
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -30,30 +34,48 @@ trainer:
       filename: '{val_loss:.2f}-{epoch:02d}'
       mode: min
 
+# datamodule:
+#   _target_: src.data.AutoEncoderDatamodule
+#   input_da: 
+#     _target_: src.utils.load_sound_speed_fields
+#     path: ${paths.sound}
+#   domains:
+#     train:
+#       time: {_target_: builtins.slice, _args_: [0, 254]}
+#     val: 
+#       time: {_target_: builtins.slice, _args_: [254, 331]}
+#     test: 
+#       time: {_target_: builtins.slice,  _args_: [331, 365]}
+#   dl_kw: {batch_size: 4, num_workers: 4}
+#   x_min: ${normalization.x_min}
+#   x_max: ${normalization.x_max}
+#   pickle_path: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}/pickle/time_idx_per_split.pickle
+
 datamodule:
-  _target_: src.data.AutoEncoderDatamodule
+  _target_: src.data.BaseDatamodule
   input_da: 
-    _target_: src.utils.load_sound_speed_fields
-    path: ${paths.sound}
-  domains:
-    train:
-      time: {_target_: builtins.slice, _args_: [0, 254]}
-    val: 
-      time: {_target_: builtins.slice, _args_: [254, 331]}
-    test: 
-      time: {_target_: builtins.slice,  _args_: [331, 365]}
+    _target_: src.utils.load_ssf_acoustic_variables
+    path1: ${paths.sound}
+    path2: ${paths.accoustic}
   dl_kw: {batch_size: 4, num_workers: 4}
   x_min: ${normalization.x_min}
   x_max: ${normalization.x_max}
+  pickle_path: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}/pickle/time_idx_per_split.pickle
+
+
 
 model:
   _target_: src.autoencoder.AutoEncoder
   x_min: ${normalization.x_min}
   x_max: ${normalization.x_max}
   lr: 0.001
-  arch_shape: 'no_pool_4'
+  arch_shape: '4_4'
   final_act_func: sigmoid  #sigmoid, relu
-
+  acoustic_predictor:
+    _target_: src.acoustic_predictor.AcousticPredictor.load_from_checkpoint
+    checkpoint_path: ${paths.acc_model_path}
+    input_depth: 107
+  accoustic_training: False
 
 entrypoints:
   - _target_: pytorch_lightning.seed_everything
@@ -62,4 +84,5 @@ entrypoints:
     trainer: ${trainer}
     lit_mod: ${model}
     dm: ${datamodule}
+
 
