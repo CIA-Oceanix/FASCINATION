@@ -16,13 +16,13 @@ trainer:
   devices: 1
   check_val_every_n_epoch: 1
   logger: 
-    _target_: pytorch_lightning.loggers.CSVLogger
-    #_target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
-    save_dir: ${hydra:runtime.output_dir}
-    name: ${hydra:runtime.choices.xp}
-    version: ${model.arch_shape}
+    #_target_: pytorch_lightning.loggers.CSVLogger
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/  #AE_with_AP/
+    name: ${model.arch_shape}_${model.final_act_func}_lr_${model.lr}
+    version: ${now:%Y-%m-%d_%H-%M}
   min_epochs: 0
-  max_epochs: 1000
+  max_epochs: 25
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -40,18 +40,19 @@ datamodule:
   dl_kw: {batch_size: 4, num_workers: 4}
   x_min: ${normalization.x_min}
   x_max: ${normalization.x_max}
-
+  pickle_path: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}/pickle/time_idx_per_split.pickle
 model:
   _target_: src.autoencoder.AutoEncoder
   x_min: ${normalization.x_min}
   x_max: ${normalization.x_max}
   lr: 0.001
-  arch_shape: 'no_pool_4'
+  arch_shape: '4_4'
+  final_act_func: relu  #sigmoid, relu
   acoustic_predictor:
     _target_: src.acoustic_predictor.AcousticPredictor.load_from_checkpoint
     checkpoint_path: ${paths.model_path}
     input_depth: 107
-
+  accoustic_training: True
 
 entrypoints:
   - _target_: pytorch_lightning.seed_everything

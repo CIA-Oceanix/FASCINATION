@@ -27,9 +27,9 @@ def base_training(trainer, dm, lit_mod, test_dm=None, ckpt=None):
     if test_dm is None:
         test_dm = dm
 
-    best_ckpt_path = trainer.checkpoint_callback.best_model_path
-    trainer.callbacks = []
-    trainer.test(lit_mod, datamodule=test_dm, ckpt_path=best_ckpt_path)
+    # best_ckpt_path = trainer.checkpoint_callback.best_model_path
+    # trainer.callbacks = []
+    trainer.test(lit_mod, datamodule=dm, ckpt_path='best')
     
     with open(f"{trainer.logger.log_dir}/model_summary.log", 'w+') as f:
         f.write(str(model_summary))
