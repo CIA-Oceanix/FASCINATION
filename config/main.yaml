@@ -1,5 +1,5 @@
 entrypoints: ???
 defaults:
-  - xp: AE_without_AP_training  #acoustic_pred_training_enatl_natl #enatl_natl #AE_without_AP_training  #AE_with_AP_training
+  - xp: AE_without_AP_training  #acoustic_pred_training #enatl_natl #AE_without_AP_training  #AE_with_AP_training
   - _self_
 

@@ -116,3 +116,11 @@ class AcousticPredictor(pl.LightningModule):
         test_loss["ecs"] = torch.sqrt(nn.MSELoss()(y_split[1]*670.25141631, output_split[1]*670.25141631))
         self.log_dict(test_loss, on_step= False, on_epoch=True)
         return test_loss
+    
+    
+    
+if __name__ == '__main__':
+    checkpoint_path = '/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/2024-04-04_15-22/checkpoints/val_loss=0.02-epoch=970.ckpt'
+    input_depth = 107
+    model = AcousticPredictor.load_from_checkpoint(checkpoint_path = checkpoint_path,input_depth = input_depth)
+    

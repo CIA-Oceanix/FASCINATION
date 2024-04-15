@@ -16,12 +16,16 @@ trainer:
   devices: 1
   check_val_every_n_epoch: 1
   logger: 
-    _target_: pytorch_lightning.loggers.CSVLogger
-    save_dir: ${hydra:runtime.output_dir}
-    name: ${hydra:runtime.choices.xp}
+    #_target_: pytorch_lightning.loggers.CSVLogger
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    #save_dir: ${hydra:runtime.output_dir}
+    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/
+    #name: ${hydra:runtime.choices.xp}
+    name: ${now:%Y-%m-%d_%H-%M}
     version: ''
+
   min_epochs: 0
-  max_epochs: 1000
+  max_epochs: 5
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint

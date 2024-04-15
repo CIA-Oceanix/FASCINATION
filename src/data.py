@@ -93,7 +93,7 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
     
     
 class BaseDatamodule(pl.LightningDataModule):
-    def __init__(self, input_da, dl_kw, x_min = 1438, x_max = 1552.54994512, pickle_path = None):
+    def __init__(self, input_da, dl_kw, x_min = 1438, x_max = 1552.54994512):
         super().__init__()
         self.input = input_da[0]
         self.target = input_da[1]
@@ -101,7 +101,7 @@ class BaseDatamodule(pl.LightningDataModule):
         
         self.x_min = x_min
         self.x_max = x_max
-        self.pickle_path = pickle_path
+
 
         self.test_time = None
         self.test_var = None
@@ -118,22 +118,9 @@ class BaseDatamodule(pl.LightningDataModule):
 
     
     def setup(self, stage):
-        random_dataset = BaseDataset(self.input, self.target)
-        train_da, val_da, test_da = torch.utils.data.random_split(random_dataset, [0.7, 0.2, 0.1], generator=torch.Generator().manual_seed(42))
-        if self.pickle_path:
-            dir_path = os.path.dirname(self.pickle_path)
-            if not os.path.exists(dir_path):
-                os.makedirs(dir_path)
-            with open(self.pickle_path,"wb") as f:
-                pickle.dump(
-                    dict(
-                        train=train_da.dataset.variables.time.values,
-                        val=val_da.dataset.variables.time.values,
-                        test=test_da.dataset.variables.time.values
-                    ),
-                    f
-                )
-                
+        train_time_idx, val_time_idx, test_time_idx = torch.utils.data.random_split(self.input.time.data,
+                                                                                    [0.7, 0.2, 0.1], 
+                                                                                    generator=torch.Generator().manual_seed(42))
         if not self.is_data_normed:
             # input_train, target_train = self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
             # mean, std = self.norm_stats(input_train, target_train)
@@ -146,17 +133,17 @@ class BaseDatamodule(pl.LightningDataModule):
         
         if stage == 'fit':
             self.train_ds = BaseDataset(
-                self.input.isel(time=train_da.indices), self.target.isel(time=train_da.indices)
+                self.input.isel(time=train_time_idx.indices), self.target.isel(time=train_time_idx.indices)
                 )
             self.val_ds = BaseDataset(
-                self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
+                self.input.isel(time=val_time_idx.indices), self.target.isel(time=val_time_idx.indices)
             )
         if stage == 'test':
             # self.val_ds = BaseDataset(
             #     self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
             # )
             self.test_ds = BaseDataset(
-                self.input.isel(time=test_da.indices), self.target.isel(time=test_da.indices)
+                self.input.isel(time=test_time_idx.indices), self.target.isel(time=test_time_idx.indices)
             )
             self.test_time = self.test_ds.variables["time"]
             self.test_var = self.test_ds.variables["variable"]
@@ -165,7 +152,7 @@ class BaseDatamodule(pl.LightningDataModule):
             self.test_z = self.test_ds.volume["z"]
 
     def train_dataloader(self):
-        return torch.utils.data.DataLoader(self.train_ds, shuffle=True, **self.dl_kw)
+        return torch.utils.data.DataLoader(self.train_ds, shuffle=False, **self.dl_kw)
     
     def val_dataloader(self):
         return torch.utils.data.DataLoader(self.val_ds, shuffle=False, **self.dl_kw)

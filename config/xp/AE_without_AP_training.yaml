@@ -3,7 +3,7 @@
 paths:
     sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
     accoustic: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_regrid_0_1000m.nc
-    acc_model_path: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/ap_training/acoustic_pred_training/checkpoints/val_loss=0.02-epoch=951.ckpt
+    acc_model_path: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/2024-04-04_15-22/checkpoints/val_loss=0.02-epoch=970.ckpt
 
 normalization:
   x_min: 1459.0439165829073
@@ -19,13 +19,13 @@ trainer:
     #_target_: pytorch_lightning.loggers.CSVLogger
     _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
     #save_dir: ${hydra:runtime.output_dir}
-    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/  #AE_without_AP/
+    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_without_AP/
     #name: ${hydra:runtime.choices.xp}
     name: ${model.arch_shape}_${model.final_act_func}_lr_${model.lr}
     version: ${now:%Y-%m-%d_%H-%M}
     # sub_dir: ${model.final_act_func}_lr_${model.lr}
   min_epochs: 0
-  max_epochs: 25
+  max_epochs: 1000 
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -60,7 +60,7 @@ datamodule:
   dl_kw: {batch_size: 4, num_workers: 4}
   x_min: ${normalization.x_min}
   x_max: ${normalization.x_max}
-  pickle_path: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}/pickle/time_idx_per_split.pickle
+
 
 
 
@@ -84,5 +84,7 @@ entrypoints:
     trainer: ${trainer}
     lit_mod: ${model}
     dm: ${datamodule}
+    pickle_path: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}/pickle/time_idx_per_split.pickle
+
 
 

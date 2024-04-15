@@ -1,4 +1,0 @@
-- xp=AE_without_AP_training
-- model.arch_shape='4_15'
-- model.final_act_func='sigmoid'
-- model.lr=0.1
