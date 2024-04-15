@@ -1,0 +1,2 @@
+- xp=acoustic_pred_training
+- trainer.max_epochs=2000

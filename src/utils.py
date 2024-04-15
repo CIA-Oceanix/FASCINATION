@@ -58,11 +58,13 @@ def load_sound_speed_fields(path):
 
 def load_ssf_acoustic_variables(path1, path2):
     ssf = xr.open_dataset(path1).transpose("time", "lat", "lon", "z")
-    cutoff_ecs = xr.open_dataset(path2).transpose("time", "lat", "lon")
+    cutoff_ecs = xr.open_dataset(path2)[['ecs','cutoff_freq']].transpose("time", "lat", "lon")
     
     for var in cutoff_ecs.data_vars:
         cutoff_ecs[var] = xr.where(cutoff_ecs[var] == 999999999999.0, 0, cutoff_ecs[var]) # setting infinite values to 0
-    cutoff_ecs["cutoff_freq"] = xr.where(cutoff_ecs["cutoff_freq"] > 10000, 10000, cutoff_ecs["cutoff_freq"]) # capping cutoff frequency at 10kHz to make training more stable. We are also only interested about frequencies around 1kHz
+    
+    if "cutoff_freq" in cutoff_ecs.data_vars:
+        cutoff_ecs["cutoff_freq"] = xr.where(cutoff_ecs["cutoff_freq"] > 10000, 10000, cutoff_ecs["cutoff_freq"]) # capping cutoff frequency at 10kHz to make training more stable. We are also only interested about frequencies around 1kHz
 
     return ssf, cutoff_ecs
 

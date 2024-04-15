@@ -54,7 +54,7 @@ class AutoEncoder(pl.LightningModule):
 
             #cut_off_rmse = = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,1,:,:], y[:,1,:,:]))
             #loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y[:,:2,:,:]))
-        if self.accoustic_training != None:
+        if self.accoustic_training != False:
                 loss = loss + ecs_rmse
         self.log('train_loss', loss, on_step= True, on_epoch=True)
         self.log('train_ECS_rmse', ecs_rmse, on_step= True, on_epoch=True)
@@ -84,6 +84,7 @@ class AutoEncoder(pl.LightningModule):
         self.log('test_loss', loss, on_step= False, on_epoch=True)
 
         return loss
+
 
 
     def architecture(self, arch_shape):
@@ -154,43 +155,43 @@ class AutoEncoder(pl.LightningModule):
                 nn.Sigmoid()
             )
             
-        if arch_shape == "4_15": 
-            ###TODO: put batchnorm
-            ###TODO check diminution kernel dans convo
-            self.encoder = nn.Sequential(
-                nn.Conv2d(107, 64, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2, stride=2),
-                nn.Conv2d(64, 32, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2, stride=2),
-                nn.Conv2d(32, 16, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2, stride=2),
-                nn.Conv2d(16, 8, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(kernel_size=2, stride=2),
-                nn.Conv2d(8, 4, kernel_size=3, padding=1),
-                nn.ReLU() 
-            )
+        # if arch_shape == "4_15": 
+        #     ###TODO: put batchnorm
+        #     ###TODO check diminution kernel dans convo
+        #     self.encoder = nn.Sequential(
+        #         nn.Conv2d(107, 64, kernel_size=3, padding=1),
+        #         nn.ReLU(),
+        #         nn.MaxPool2d(kernel_size=2, stride=2),
+        #         nn.Conv2d(64, 32, kernel_size=3, padding=1),
+        #         nn.ReLU(),
+        #         nn.MaxPool2d(kernel_size=2, stride=2),
+        #         nn.Conv2d(32, 16, kernel_size=3, padding=1),
+        #         nn.ReLU(),
+        #         nn.MaxPool2d(kernel_size=2, stride=2),
+        #         nn.Conv2d(16, 8, kernel_size=3, padding=1),
+        #         nn.ReLU(),
+        #         nn.MaxPool2d(kernel_size=2, stride=2),
+        #         nn.Conv2d(8, 4, kernel_size=3, padding=1),
+        #         nn.ReLU() 
+        #     )
             
-            ###TODO: enlever ReLU
-            ###TODO check stride
-            self.decoder = nn.Sequential(
-                nn.ConvTranspose2d(4, 8, kernel_size=2, stride=2),
-                nn.ReLU(),
-                nn.ConvTranspose2d(8, 16, kernel_size=2, stride=2),
-                nn.ReLU(),
-                nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
-                nn.ReLU(),
-                nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
-                nn.Sigmoid() ###! sortie [0;1] ? test softplus, htgt, relu
-            )
+        #     ###TODO: enlever ReLU
+        #     ###TODO check stride
+        #     self.decoder = nn.Sequential(
+        #         nn.ConvTranspose2d(4, 8, kernel_size=2, stride=2),
+        #         nn.ReLU(),
+        #         nn.ConvTranspose2d(8, 16, kernel_size=2, stride=2),
+        #         nn.ReLU(),
+        #         nn.ConvTranspose2d(16, 64, kernel_size=2, stride=2),
+        #         nn.ReLU(),
+        #         nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
+        #         nn.Sigmoid() ###! sortie [0;1] ? test softplus, htgt, relu
+        #     )
             
                       
         
         
-        if arch_shape == "4_15_test": 
+        if arch_shape == "4_15": 
             ###TODO: put batchnorm
             ###TODO check diminution kernel dans convo
             self.encoder = nn.Sequential(
@@ -289,6 +290,26 @@ class AutoEncoder(pl.LightningModule):
             # Decoder layers
             self.decoder = nn.Sequential(
                 nn.ConvTranspose2d(in_channels=4, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose1
+                final_act_func # Output activation function
+            )
+            
+        if arch_shape == "pca_50" :
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels=107, out_channels=50, kernel_size=1, stride=1, padding=0)  # Conv1
+            )
+            # Decoder layers
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(in_channels=50, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose1
+                final_act_func # Output activation function
+            )
+            
+        if arch_shape == "pca_107" :
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels=107, out_channels=107, kernel_size=1, stride=1, padding=0)  # Conv1
+            )
+            # Decoder layers
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(in_channels=107, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose1
                 final_act_func # Output activation function
             )
             

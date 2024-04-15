@@ -1,8 +1,10 @@
 import torch
+import pickle
+import os
 from torchinfo import summary
 torch.set_float32_matmul_precision('high')
 
-def base_training(trainer, dm, lit_mod, test_dm=None, ckpt=None):
+def base_training(trainer, dm, lit_mod, test_dm=None, ckpt=None, pickle_path = None):
     if trainer.logger is not None:
         print()
         print("Logdir:", trainer.logger.log_dir)
@@ -34,3 +36,16 @@ def base_training(trainer, dm, lit_mod, test_dm=None, ckpt=None):
     with open(f"{trainer.logger.log_dir}/model_summary.log", 'w+') as f:
         f.write(str(model_summary))
 
+    if pickle_path:
+        os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
+        with open(pickle_path,"wb") as f:
+            pickle.dump(
+                dict(
+                    train=dm.train_ds.volume.time.values,
+                    val=dm.val_ds.volume.time.values,
+                    test=dm.test_ds.volume.time.values
+                ),
+                f
+            )
+                
+    
