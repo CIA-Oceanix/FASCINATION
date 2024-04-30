@@ -1,0 +1,4 @@
+- xp=AE_without_AP_training
+- model.arch_shape='pca_107'
+- model.final_act_func='relu'
+- model.lr=0.001
