@@ -6,9 +6,9 @@ paths:
     #test: /DATASET/NATL/NATL60-CJM165-ssh-2012-2013-${resolution}.nc
     test: /DATASET/NATL/NATL60GULF-CJM165_sound_speed_regrid_0_1000m.nc
   accoustic:
-    train: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_regrid_0_1000m.nc
-    test: /DATASET/NATL/NATL60GULF-CJM165_cutoff_freq_regrid_0_1000m.nc
-
+    train: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_at_0_regrid_0_1000m.nc
+    test: /DATASET/envs/o23gauvr/tmp/NATL60GULF-CJM165_ECS_at_0_regrid_0_1000m.nc
+    
 spatial_domain:
   lon: {_target_: builtins.slice, _args_: [-64,-55]}
   lat: {_target_: builtins.slice, _args_: [31,43]}

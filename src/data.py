@@ -127,8 +127,9 @@ class BaseDatamodule(pl.LightningDataModule):
             if self.x_max is None or self.x_min is None:
                 self.x_min, self.x_max = np.nanmin(self.input.celerity.values), np.nanmax(self.input.celerity.values)
             self.input = (self.input - self.x_min)/(self.x_max - self.x_min) # min max normalization, hard coded values for now because it saves computation time
-            self.target["cutoff_freq"] = (self.target["cutoff_freq"])/10000  
-            self.target["ecs"] = (self.target["ecs"])/670.25141631
+            #self.target["cutoff_freq"] = (self.target["cutoff_freq"])/10000  
+            #self.target["ecs"] = (self.target["ecs"])/670.25141631
+            self.target = self.target/670.25141631
             self.is_data_normed = True
         
         if stage == 'fit':
@@ -145,11 +146,11 @@ class BaseDatamodule(pl.LightningDataModule):
             self.test_ds = BaseDataset(
                 self.input.isel(time=test_time_idx.indices), self.target.isel(time=test_time_idx.indices)
             )
-            self.test_time = self.test_ds.variables["time"]
-            self.test_var = self.test_ds.variables["variable"]
-            self.test_lat = self.test_ds.variables["lat"]
-            self.test_lon = self.test_ds.variables["lon"]
-            self.test_z = self.test_ds.volume["z"]
+            self.test_time = self.test_ds.tgt["time"]
+            self.test_var = self.test_ds.tgt["variable"]
+            self.test_lat = self.test_ds.tgt["lat"]
+            self.test_lon = self.test_ds.tgt["lon"]
+            self.test_z = self.test_ds.input["z"]
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(self.train_ds, shuffle=False, **self.dl_kw)
@@ -160,10 +161,10 @@ class BaseDatamodule(pl.LightningDataModule):
     def test_dataloader(self):
         return torch.utils.data.DataLoader(self.test_ds, shuffle=False, **self.dl_kw)
     
-    def norm_stats(self, input, target):
+    def norm_stats(self, ipt, target):
         mean, std = {}, {}
-        mean["input"] = input.mean()
-        std["input"] = input.std()
+        mean["input"] = ipt.mean()
+        std["input"] = ipt.std()
         for j in target.data_vars:
             mean[j] = target[j].mean()
             std[j] = target[j].std()
@@ -171,15 +172,15 @@ class BaseDatamodule(pl.LightningDataModule):
         return mean, std
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, volume, variables):
+    def __init__(self, ipt, tgt):
         super().__init__()
-        self.volume, self.variables = volume.transpose('time', 'z', 'lat', 'lon'), variables.to_array().transpose('time', 'variable', 'lat', 'lon')
+        self.input, self.tgt = ipt.transpose('time', 'z', 'lat', 'lon'), tgt.to_array().transpose('time', 'variable', 'lat', 'lon')
 
     def __len__(self):
-        return min(len(self.volume.time), len(self.variables.time))
+        return min(len(self.input.time), len(self.tgt.time))
     
     def __getitem__(self, index):
-        return TrainingItem._make((np.nan_to_num(self.volume.celerity[index].data.astype(np.float32)), self.variables[index].data.astype(np.float32)))
+        return TrainingItem._make((np.nan_to_num(self.input.celerity[index].data.astype(np.float32)), self.tgt.variable[index].data.astype(np.float32)))
     
 # class BaseDataModule(pl.LightningDataModule):
 #     def __init__(self, input_da, domains, xrds_kw, dl_kw, aug_kw=None, norm_stats=None, **kwargs):

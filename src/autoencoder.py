@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from torchsummary import summary
+ 
 
 class AutoEncoder(pl.LightningModule):
     def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60",final_act_func = 'sigmoid',  acoustic_predictor=None, accoustic_training = False):
@@ -21,7 +22,8 @@ class AutoEncoder(pl.LightningModule):
         self.test_data = None
         self.final_act_func = final_act_func
         self.acoustic_predictor = acoustic_predictor
-        self.acoustic_predictor.eval()
+        if self.acoustic_predictor:
+            self.acoustic_predictor.eval()
         self.accoustic_training = accoustic_training
 
         self.architecture(arch_shape)
@@ -50,12 +52,15 @@ class AutoEncoder(pl.LightningModule):
         output = self(x)
         loss = torch.sqrt(nn.MSELoss()(output, x))
         self.log('train_loss_AE', loss, on_step= True, on_epoch=True)
-        ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,-1,:,:], y[:,1,:,:]))
+        
+        if self.acoustic_predictor:
+            ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y))
 
             #cut_off_rmse = = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,1,:,:], y[:,1,:,:]))
             #loss = loss + torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y[:,:2,:,:]))
-        if self.accoustic_training != False:
-                loss = loss + ecs_rmse
+            if self.accoustic_training != False:
+                    loss = loss + ecs_rmse
+                    
         self.log('train_loss', loss, on_step= True, on_epoch=True)
         self.log('train_ECS_rmse', ecs_rmse, on_step= True, on_epoch=True)
 
@@ -65,10 +70,12 @@ class AutoEncoder(pl.LightningModule):
         x, y = batch
         output = self(x)
         loss = torch.sqrt(nn.MSELoss()(output, x))
-        ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,1,:,:], y[:,1,:,:]))
-        
+        if self.acoustic_predictor:
+            ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y))
+            self.log('val_ECS_rmse', ecs_rmse, on_step= True, on_epoch=True)
+
         self.log('val_loss', loss, on_step= False, on_epoch=True)
-        self.log('val_ECS_rmse', ecs_rmse, on_step= True, on_epoch=True)
+        
         return loss
     
     def test_step(self, batch, batch_idx):
@@ -77,10 +84,13 @@ class AutoEncoder(pl.LightningModule):
         x, y = batch
         output = self(x)
         self.test_data.append(torch.stack([x, output], dim=1))
-        loss = torch.sqrt(nn.MSELoss()(output*(self.x_max - self.x_min)+self.x_min, x*(self.x_max - self.x_min)+self.x_min))        
-        ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output)[:,1,:,:], y[:,1,:,:]))
+        loss = torch.sqrt(nn.MSELoss()(output*(self.x_max - self.x_min)+self.x_min, x*(self.x_max - self.x_min)+self.x_min))   
         
-        self.log('test_ecs_rmse_normalized', ecs_rmse, on_step= False, on_epoch=True)
+        if self.acoustic_predictor:     
+            ecs_rmse = torch.sqrt(nn.MSELoss()(self.acoustic_predictor(output), y))
+        
+            self.log('test_ecs_rmse_normalized', ecs_rmse, on_step= False, on_epoch=True)
+            
         self.log('test_loss', loss, on_step= False, on_epoch=True)
 
         return loss
@@ -188,8 +198,6 @@ class AutoEncoder(pl.LightningModule):
         #         nn.Sigmoid() ###! sortie [0;1] ? test softplus, htgt, relu
         #     )
             
-                      
-        
         
         if arch_shape == "4_15": 
             ###TODO: put batchnorm
@@ -259,6 +267,131 @@ class AutoEncoder(pl.LightningModule):
                 nn.ConvTranspose2d(64, 107, kernel_size=2, stride=2),
                 final_act_func ###* sigmoid ok si normalization, valeur entre 0 et 1
             )
+        
+        
+        if arch_shape == "4_60_dense_avgpool_upsample_no_activation": 
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels = 107, out_channels = 60, kernel_size = (1,1), stride = 1, padding = 0,bias = True),
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(in_channels = 60, out_channels = 32, kernel_size = (1,1)),  ##* we don't precise argument by default
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(32, 4, kernel_size=(1,1))        
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(4, 32, kernel_size=(1,1)), 
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(32, 60, kernel_size=(1,1)),
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(60, 107, kernel_size=(1,1))
+            )
+            
+            
+        if arch_shape == "20_60_dense_avgpool_upsample_no_activation": 
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels = 107, out_channels = 60, kernel_size = (1,1), stride = 1, padding = 0,bias = True),
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(in_channels = 60, out_channels = 32, kernel_size = (1,1)),  ##* we don't precise argument by default
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(32, 20, kernel_size=(1,1))        
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(20, 32, kernel_size=(1,1)), 
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(32, 60, kernel_size=(1,1)),
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(60, 107, kernel_size=(1,1))
+                )
+            
+                       
+        if arch_shape == "4_60_dense_avgpool_upsample_all_Relu": 
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels = 107, out_channels = 60, kernel_size = (1,1), stride = 1, padding = 0,bias = True),
+                nn.AvgPool2d(kernel_size=2),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels = 60, out_channels = 32, kernel_size = (1,1)),  ##* we don't precise argument by default
+                nn.AvgPool2d(kernel_size=2),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 4, kernel_size=(1,1)),      
+                nn.ReLU(inplace=True),
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(4, 32, kernel_size=(1,1)), 
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(32, 60, kernel_size=(1,1)),
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(60, 107, kernel_size=(1,1)),
+                nn.ReLU(inplace=True),
+            )
+            
+               
+        if arch_shape == "20_60_dense_avgpool_upsample_all_Relu": 
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels = 107, out_channels = 60, kernel_size = (1,1), stride = 1, padding = 0,bias = True),
+                nn.AvgPool2d(kernel_size=2),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels = 60, out_channels = 32, kernel_size = (1,1)),  ##* we don't precise argument by default
+                nn.AvgPool2d(kernel_size=2),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(32, 20, kernel_size=(1,1)),
+                nn.ReLU(inplace=True),    
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(20, 32, kernel_size=(1,1)), 
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(32, 60, kernel_size=(1,1)),
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(60, 107, kernel_size=(1,1)),
+                nn.ReLU(inplace=True),
+                )
+        
+        if arch_shape == "4_60_dense_avgpool_upsample_final_Relu": 
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels = 107, out_channels = 60, kernel_size = (1,1), stride = 1, padding = 0,bias = True),
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(in_channels = 60, out_channels = 32, kernel_size = (1,1)),  ##* we don't precise argument by default
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(32, 4, kernel_size=(1,1)),      
+                nn.ReLU(inplace=True),
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(4, 32, kernel_size=(1,1)), 
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(32, 60, kernel_size=(1,1)),
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(60, 107, kernel_size=(1,1)),
+                nn.ReLU(inplace=True),
+            )
+            
+        if arch_shape == "20_60_dense_avgpool_upsample_final_Relu": 
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels = 107, out_channels = 60, kernel_size = (1,1), stride = 1, padding = 0,bias = True),
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(in_channels = 60, out_channels = 32, kernel_size = (1,1)),  ##* we don't precise argument by default
+                nn.AvgPool2d(kernel_size=2),
+                nn.Conv2d(32, 20, kernel_size=(1,1)),
+                nn.ReLU(inplace=True),    
+            )
+            
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(20, 32, kernel_size=(1,1)), 
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(32, 60, kernel_size=(1,1)),
+                nn.Upsample(scale_factor = (2,2)),
+                nn.ConvTranspose2d(60, 107, kernel_size=(1,1)),
+                nn.ReLU(inplace=True),
+                )
+        
+
+            
             
         if arch_shape == "no_pool_4" :
             self.encoder = nn.Sequential(
@@ -280,9 +413,30 @@ class AutoEncoder(pl.LightningModule):
                 nn.ConvTranspose2d(in_channels=32, out_channels=64, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose3
                 nn.ReLU(inplace=True),
                 nn.ConvTranspose2d(in_channels=64, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose4
-                nn.Sigmoid()  # Output activation function
+                nn.ReLU()  # Output activation function
             )
-    
+        
+        
+        if arch_shape == "no_pool_20" :
+            self.encoder = nn.Sequential(
+                nn.Conv2d(in_channels=107, out_channels=64, kernel_size=1, stride=1, padding=0),  # Conv1
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels=64, out_channels=32, kernel_size=1, stride=1, padding=0), # Conv2
+                nn.ReLU(inplace=True),
+                nn.Conv2d(in_channels=32, out_channels=20, kernel_size=1, stride=1, padding=0), # Conv3
+                nn.ReLU(inplace=True)
+            )
+            # Decoder layers
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(in_channels=20, out_channels=32, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose2
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(in_channels=32, out_channels=64, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose3
+                nn.ReLU(inplace=True),
+                nn.ConvTranspose2d(in_channels=64, out_channels=107, kernel_size=1, stride=1, padding=0, output_padding=0), # ConvTranspose4
+                nn.ReLU()  # Output activation function
+            )
+            
+            
         if arch_shape == "pca_4" :
             self.encoder = nn.Sequential(
                 nn.Conv2d(in_channels=107, out_channels=4, kernel_size=1, stride=1, padding=0)  # Conv1
