@@ -1,0 +1,67 @@
+paths:
+  sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+  variables: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_binary_classification_at_0_regrid_0_1000m.nc
+normalization:
+  x_min: 1459.0439165829073
+  x_max: 1545.8698054910844
+dtype: float32
+trainer:
+  _target_: pytorch_lightning.Trainer
+  inference_mode: false
+  accelerator: gpu
+  devices: 1
+  check_val_every_n_epoch: 1
+  logger:
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/ap_classif/
+    name: ${model.model_name}
+    version: ${now:%Y-%m-%d_%H-%M}
+  min_epochs: 0
+  max_epochs: 2
+  callbacks:
+  - _target_: pytorch_lightning.callbacks.LearningRateMonitor
+  - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: val_loss
+    save_top_k: 1
+    filename: '{val_loss:.2f}-{epoch:02d}'
+    mode: min
+  - _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: val_loss
+    min_delta: 0.0
+    check_on_train_epoch_end: true
+    patience: 5
+    verbose: true
+datamodule:
+  _target_: src.data.BaseDatamodule
+  input_da:
+    _target_: src.utils.load_ssf_ecs_classif_da
+    ssf_da_path: ${paths.sound}
+    ecs_classif_da_path: ${paths.variables}
+  dl_kw:
+    batch_size: 4
+    num_workers: 4
+  x_min: ${normalization.x_min}
+  x_max: ${normalization.x_max}
+  dtype_str: ${dtype}
+model:
+  _target_: src.ecs_classification.ECS_classification
+  model_name: UNet
+  model_hparams: ${model_config.${model.model_name}}
+model_config:
+  UNet:
+    num_classes: 2
+    num_layers: 5
+    features_start: 64
+    bilinear: false
+    three_dim: false
+    batch_norm: true
+    avg_pool: false
+    dtype_str: ${dtype}
+  ResNet: null
+entrypoints:
+- _target_: pytorch_lightning.seed_everything
+  seed: 333
+- _target_: src.train.base_training
+  trainer: ${trainer}
+  lit_mod: ${model}
+  dm: ${datamodule}

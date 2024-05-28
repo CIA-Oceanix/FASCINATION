@@ -1,0 +1,7 @@
+num_classes: 2
+num_layers: 5
+features_start: 64
+bilinear: False
+three_dim : False
+batch_norm: True
+avg_pool: False

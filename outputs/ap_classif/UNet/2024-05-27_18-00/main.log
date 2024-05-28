@@ -1,0 +1,6 @@
+[2024-05-27 18:00:04,465][lightning_fabric.utilities.seed][INFO] - Seed set to 333
+[2024-05-27 18:00:04,914][pytorch_lightning.utilities.rank_zero][INFO] - GPU available: True (cuda), used: True
+[2024-05-27 18:00:04,960][pytorch_lightning.utilities.rank_zero][INFO] - TPU available: False, using: 0 TPU cores
+[2024-05-27 18:00:04,960][pytorch_lightning.utilities.rank_zero][INFO] - IPU available: False, using: 0 IPUs
+[2024-05-27 18:00:04,960][pytorch_lightning.utilities.rank_zero][INFO] - HPU available: False, using: 0 HPUs
+[2024-05-27 18:00:38,358][pytorch_lightning.accelerators.cuda][INFO] - LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0,1,2,3,4,5,6,7]

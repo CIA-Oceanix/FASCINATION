@@ -8,6 +8,7 @@ normalization:
   x_min: 1459.0439165829073
   x_max: 1545.8698054910844
 
+dtype: float32 #float16 #float64 
 
 trainer:
   _target_: pytorch_lightning.Trainer
@@ -34,6 +35,12 @@ trainer:
       save_top_k: 1
       filename: '{val_loss:.2f}-{epoch:02d}'
       mode: min
+    # - _target_: pytorch_lightning.callbacks.EarlyStopping
+    #   monitor: val_loss
+    #   min_delta: 1.0e-6
+    #   check_on_train_epoch_end: True
+    #   verbose: True
+      
 
 datamodule:
   _target_: src.data.BaseDatamodule
@@ -44,6 +51,7 @@ datamodule:
   dl_kw: {batch_size: 4, num_workers: 4}
   x_min: ${normalization.x_min}
   x_max: ${normalization.x_max}
+  dtype_str: ${dtype}  
 
 model:
   _target_: src.acoustic_predictor.AcousticPredictor
@@ -54,7 +62,11 @@ model:
   classif_weight: 0
   pred_weight: 1
   kernel_size: 8
-  arch_shape: 'dense_3D_CNN_ReLu_1st_kernel_size'
+  arch_shape: 'dense_3D_CNN_ReLu'
+  dtype_str: ${dtype}  
+
+  
+
 
 
 
@@ -70,3 +82,8 @@ entrypoints:
 hydra:
   run:
     dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
+
+# torch:
+#   backends:
+#     cudnn:
+#       allow_tf32: False

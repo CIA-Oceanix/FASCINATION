@@ -16,8 +16,13 @@ from torchsummary import summary
  
 
 class AutoEncoder(pl.LightningModule):
-    def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60",final_act_func = 'sigmoid',  acoustic_predictor=None, accoustic_training = False):
-        super(AutoEncoder, self).__init__()
+    def __init__(self,x_min = 1438, x_max = 1552.54994512, lr=1e-3, arch_shape = "16_60",final_act_func = 'sigmoid',  acoustic_predictor=None, accoustic_training = False, dtype_str = "float32"):
+        super().__init__()
+        
+        #self.save_hyperparameters() #! this is causing an error
+        
+        
+    
         self.lr = lr
         self.test_data = None
         self.final_act_func = final_act_func
@@ -30,6 +35,13 @@ class AutoEncoder(pl.LightningModule):
         
         self.x_min = x_min
         self.x_max = x_max
+        
+        self.dtype_str = dtype_str
+        self.model_dtype = getattr(torch, dtype_str) ##TODO use this argument
+        
+
+        
+        
         
         # if torch.cuda.is_available():
         #     self.input_da.to('cuda')

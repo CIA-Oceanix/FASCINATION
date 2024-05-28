@@ -1,0 +1,3 @@
+- model.arch_shape='dense_3D_CNN_ReLu'
+- model.classif_weight=1
+- model.pred_weight=100

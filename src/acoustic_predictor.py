@@ -15,7 +15,8 @@ import torch.nn as nn
 import pytorch_lightning as pl
 import xarray as xr
 import pandas as pd
-from src.utils import psd_based_scores, rmse_based_scores
+import numpy as np
+from src.UNet import UNet
 
 
 class ConvBlock(pl.LightningModule):
@@ -52,10 +53,13 @@ class IncreaseDomain(pl.LightningModule):
         )
     def forward(self, x):
         return self.block(x)
+    
+    
+ 
 
 
 class AcousticPredictor(pl.LightningModule):
-    def __init__(self, input_depth, acoustic_variables=1, lr=1e-3, T_max=10, classif_weight = 1, pred_weight = 1, kernel_size = 8, arch_shape = "dense_3D_CNN_ReLu"):
+    def __init__(self, input_depth = 107, acoustic_variables=1, lr=1e-3, T_max=10, classif_weight = 1, pred_weight = 1, kernel_size = 8, arch_shape = "dense_3D_CNN_ReLu", dtype_str = 'float32'):
         super(AcousticPredictor, self).__init__()
         self.lr = lr
         self.T_max = T_max
@@ -66,7 +70,10 @@ class AcousticPredictor(pl.LightningModule):
         self.kernel_size = kernel_size
         self.acoustic_variables = acoustic_variables
         self.input_depth = input_depth
+        self.model_dtype = getattr(torch, dtype_str)
         self.architecure()
+        
+        self.save_hyperparameters()
     
 
 
@@ -96,79 +103,105 @@ class AcousticPredictor(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
 
-        if self.arch_shape == 'dense_3D_CNN_ReLu':
-            return self.step(batch,'train')
+        return self.step(batch,'train')
 
-        else:   
-            x, y = batch               
-            output = self(x)  ##* does not require squeeze() even with 3D arch
-            loss = torch.sqrt(nn.MSELoss()(y, output))
-            self.log('train_loss', loss, on_step= False, on_epoch=True)
-            return loss
+        # else:   
+        #     x, y = batch               
+        #     output = self(x)  ##* does not require squeeze() even with 3D arch
+        #     loss = torch.sqrt(nn.MSELoss()(y, output))
+        #     self.log('train_loss', loss, on_step= False, on_epoch=True)
+        #     return loss
     
     # def on_train_epoch_end(self, outputs):
     #     self.scheduler.step()
     
     def validation_step(self, batch, batch_idx):
-                 
-        if self.arch_shape == 'dense_3D_CNN_ReLu':
-            return self.step(batch,'val')
+
+        return self.step(batch,'val')
     
-        else:
-            x, y = batch
-            output = self(x)
-            loss = nn.MSELoss()(output, y)
-            self.log('val_loss', loss, on_step= False, on_epoch=True)
-            return loss
+        # else:
+        #     x, y = batch
+        #     output = self(x)
+        #     loss = nn.MSELoss()(output, y)
+        #     self.log('val_loss', loss, on_step= False, on_epoch=True)
+        #     return loss
         
+    # def on_validation_epoch_end(self):
+         
+    #     val_loss = self.trainer.callback_metrics['val_loss']
+    #     print('\n',val_loss, val_loss.item())
+    #     print(self.trainer.early_stopping_callback.best_score,self.trainer.early_stopping_callback.best_score.item())
+    #     print(val_loss.item() - self.trainer.early_stopping_callback.best_score.item())
+    #     print(torch.lt(val_loss - 1.0e-6,self.trainer.early_stopping_callback.best_score))
         
         
     def test_step(self, batch, batch_idx):
         
-        if self.arch_shape == 'dense_3D_CNN_ReLu':
-            return self.step(batch,'test')
+        pred_loss, classif_loss = self.step(batch,'test')
+        
+        
+        ecs_rmse = torch.sqrt(pred_loss)*670.25141631
+        self.log("ECS RMSE", ecs_rmse)
+        self.log("ECS classification corss entropy loss",classif_loss)
         
         
         # if batch_idx == 0:
         #     self.test_data = []
         
-        else:
-            x, y = batch
-            output = self(x)
-            #y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
-            #self.test_data.append(torch.cat([y, output], dim=1))
-            test_loss = {
-                "ecs": 0.0
-            }   ##add 'cutoff_freq if needed
-            #test_loss["cutoff_freq"] = torch.sqrt(nn.MSELoss()(y_split*10000, output_split*10000))
-            test_loss["ecs"] = torch.sqrt(nn.MSELoss()(y, output)).item()*670.25141631
-            self.log_dict(test_loss, on_step= False, on_epoch=True)
-            return test_loss
+        # else:
+        #     x, y = batch
+        #     output = self(x)
+        #     #y_split, output_split = torch.split(y, 1, dim=1), torch.split(output, 1, dim=1)
+        #     #self.test_data.append(torch.cat([y, output], dim=1))
+        #     test_loss = {
+        #         "ecs": 0.0
+        #     }   ##add 'cutoff_freq if needed
+        #     #test_loss["cutoff_freq"] = torch.sqrt(nn.MSELoss()(y_split*10000, output_split*10000))
+        #     test_loss["ecs"] = torch.sqrt(nn.MSELoss()(y, output)).item()*670.25141631
+        #     self.log_dict(test_loss, on_step= False, on_epoch=True)
+        #     return test_loss
     
     
     def step(self, batch, phase = ""):
         
         x,y = batch
         
-        y_classif = y.squeeze(dim=1).long()
-        y_classif[y_classif !=0] = 1
-        ecs_pred, ecs_classif = self(x)
-        classif_loss = nn.CrossEntropyLoss()(ecs_classif,y_classif) ##* a softmax is applied inside the loss function
-        pred_loss = nn.MSELoss()(ecs_pred,y)
-        
+        if self.arch_shape == 'dense_3D_CNN_ReLu':
+            y_classif = y.squeeze(dim=1).long()
+            y_classif[y_classif !=0] = 1
+            ecs_pred, ecs_classif = self(x)
+            pred_loss = nn.MSELoss()(ecs_pred,y)
+            classif_loss = nn.CrossEntropyLoss()(ecs_classif,y_classif) ##* a softmax is applied inside the loss function
+            full_loss = self.pred_weight*pred_loss + self.classif_weight*classif_loss
+            
+        else:
+            ecs_pred = self(x)
+            classif_loss = np.nan
+            pred_loss = nn.MSELoss()(ecs_pred,y)
+            full_loss = pred_loss 
+
         if phase == 'test':
-            pred_loss = torch.sqrt(pred_loss)*670.25141631
+            return pred_loss, classif_loss
+
+
         
-        loss_dict = {f"prediction loss {phase}" :pred_loss,
-                     f"classification loss {phase}" : classif_loss}
+        else:
+ 
+            # loss_dict = {f"prediction loss {phase}": pred_loss,
+            #             f"classification loss {phase}": classif_loss,
+            #             f"{phase}_loss": full_loss}
+            
+            # self.log_dict(loss_dict, prog_bar=True, on_step=None, on_epoch=True)
+            
+            self.log(f"prediction loss {phase}", pred_loss,  prog_bar=False, on_step=None, on_epoch=True)
+            self.log(f"classification loss {phase}", classif_loss,  prog_bar=False, on_step=None, on_epoch=True)
+            self.log(f"{phase}_loss", full_loss,  prog_bar=True, on_step=None, on_epoch=True)
+            
+            #self.log(f"{phase}_loss",full_loss)
+            
+            return full_loss
         
-        self.log_dict(loss_dict, prog_bar=True, on_step=False, on_epoch=True)
         
-        full_loss = self.pred_weight*pred_loss + self.classif_weight*classif_loss
-        
-        self.log(f"{phase}_loss",full_loss)
-        
-        return full_loss
         
     
     def architecure(self):
@@ -214,7 +247,7 @@ class AcousticPredictor(pl.LightningModule):
             num_layers = int((self.input_depth-1)/(depth_kernel_size-1))
             conv_layers = [nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(depth_kernel_size, 1, 1), stride=1, padding=0) for _ in range(num_layers)]
             self.encoder = nn.Sequential(*conv_layers,
-                                         nn.ReLU())
+                                         nn.Sigmoid())
             
         
         elif self.arch_shape == 'dense_3D_CNN_ReLu_2nd_kernel_size':
@@ -224,7 +257,7 @@ class AcousticPredictor(pl.LightningModule):
             num_layers = int((self.input_depth-1)/(depth_kernel_size-1))
             conv_layers = [nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(depth_kernel_size, 1, 1), stride=1, padding=0) for _ in range(num_layers)]
             self.encoder = nn.Sequential(*conv_layers,
-                                         nn.ReLU())
+                                         nn.Sigmoid())
             
 
         
@@ -235,7 +268,7 @@ class AcousticPredictor(pl.LightningModule):
             conv_layers = [nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(depth_kernel_size, 1, 1), stride=1, padding=0) for _ in range(num_layers)]
             self.encoder = nn.Sequential(*conv_layers,
                                          nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(last_kernel, 1, 1), stride=1, padding=0),
-                                         nn.ReLU())
+                                         nn.Sigmoid())
             
         elif self.arch_shape == 'dense_3D_CNN_ReLu_kernel_size_8':
             depth_kernel_size = 8
@@ -244,7 +277,7 @@ class AcousticPredictor(pl.LightningModule):
             conv_layers = [nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(depth_kernel_size, 1, 1), stride=1, padding=0) for _ in range(num_layers)]
             self.encoder = nn.Sequential(*conv_layers,
                                          nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(last_kernel, 1, 1), stride=1, padding=0),
-                                         nn.ReLU())
+                                         nn.Sigmoid())
             
                     
         elif self.arch_shape == 'dense_3D_CNN_ReLu_kernel_size_20':
@@ -254,7 +287,7 @@ class AcousticPredictor(pl.LightningModule):
             conv_layers = [nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(depth_kernel_size, 1, 1), stride=1, padding=0) for _ in range(num_layers)]
             self.encoder = nn.Sequential(*conv_layers,
                                          nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(last_kernel, 1, 1), stride=1, padding=0),
-                                         nn.ReLU())
+                                         nn.Sigmoid())
             
             
         elif self.arch_shape == 'dense_3D_CNN_ReLu':
@@ -267,13 +300,13 @@ class AcousticPredictor(pl.LightningModule):
                 last_kernel = int(self.input_depth - num_layers*(self.kernel_size-1))
                 
                 
-            conv_layers = [nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(self.kernel_size, 1, 1), stride=1, padding=0) for _ in range(num_layers)]
+            conv_layers = [nn.Conv3d(in_channels=1, out_channels=1, kernel_size=(self.kernel_size, 1, 1), stride=1, padding=0).to(self.model_dtype) for _ in range(num_layers)]
             self.encoder = nn.Sequential(*conv_layers)
             
-            self.ecs_pred_model = nn.Sequential(nn.Linear(last_kernel,1),
+            self.ecs_pred_model = nn.Sequential(nn.Linear(last_kernel,1).to(self.model_dtype),
                                                 nn.Sigmoid())  ##* outputs of Linear is all negative
             
-            self.ecs_classif_model = nn.Linear(last_kernel,2)  ###* nn.softmax(dim=-1) is applied inside crossentropyloss
+            self.ecs_classif_model = nn.Linear(last_kernel,2).to(self.model_dtype)  ###* nn.softmax(dim=-1) is applied inside crossentropyloss
 
 
     def get_n_th_smallest_denominator(self,n):

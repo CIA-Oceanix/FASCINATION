@@ -93,7 +93,7 @@ class AutoEncoderDataset(torch.utils.data.Dataset):
     
     
 class BaseDatamodule(pl.LightningDataModule):
-    def __init__(self, input_da, dl_kw, x_min = 1438, x_max = 1552.54994512):
+    def __init__(self, input_da, dl_kw, x_min = 1438, x_max = 1552.54994512, dtype_str = 'float32'):
         super().__init__()
         self.input = input_da[0]
         self.target = input_da[1]
@@ -101,6 +101,8 @@ class BaseDatamodule(pl.LightningDataModule):
         
         self.x_min = x_min
         self.x_max = x_max
+        
+        self.dtype_str = dtype_str
 
 
         self.test_time = None
@@ -134,20 +136,20 @@ class BaseDatamodule(pl.LightningDataModule):
         
         if stage == 'fit':
             self.train_ds = BaseDataset(
-                self.input.isel(time=train_time_idx.indices), self.target.isel(time=train_time_idx.indices)
+                self.input.isel(time=train_time_idx.indices), self.target.isel(time=train_time_idx.indices), dtype_str = self.dtype_str
                 )
             self.val_ds = BaseDataset(
-                self.input.isel(time=val_time_idx.indices), self.target.isel(time=val_time_idx.indices)
-            )
+                self.input.isel(time=val_time_idx.indices), self.target.isel(time=val_time_idx.indices), dtype_str= self.dtype_str
+                )
         if stage == 'test':
             # self.val_ds = BaseDataset(
             #     self.input.isel(time=val_da.indices), self.target.isel(time=val_da.indices)
             # )
             self.test_ds = BaseDataset(
-                self.input.isel(time=test_time_idx.indices), self.target.isel(time=test_time_idx.indices)
+                self.input.isel(time=test_time_idx.indices), self.target.isel(time=test_time_idx.indices), dtype_str = self.dtype_str
             )
             self.test_time = self.test_ds.tgt["time"]
-            self.test_var = self.test_ds.tgt["variable"]
+            #self.test_var = self.test_ds.tgt["variable"]
             self.test_lat = self.test_ds.tgt["lat"]
             self.test_lon = self.test_ds.tgt["lon"]
             self.test_z = self.test_ds.input["z"]
@@ -172,15 +174,104 @@ class BaseDatamodule(pl.LightningDataModule):
         return mean, std
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, ipt, tgt):
+    def __init__(self, ipt, tgt, dtype_str = 'float32'):
         super().__init__()
-        self.input, self.tgt = ipt.transpose('time', 'z', 'lat', 'lon'), tgt.to_array().transpose('time', 'variable', 'lat', 'lon')
-
+        self.input, self.tgt = ipt.transpose('time', 'z', 'lat', 'lon'), tgt.transpose('time', 'lat', 'lon')   #tgt.to_array().transpose('time', 'variable', 'lat', 'lon')
+        self.dtype = getattr(np, dtype_str)
+        
     def __len__(self):
         return min(len(self.input.time), len(self.tgt.time))
     
     def __getitem__(self, index):
-        return TrainingItem._make((np.nan_to_num(self.input.celerity[index].data.astype(np.float32)), self.tgt.variable[index].data.astype(np.float32)))
+        return TrainingItem._make((np.nan_to_num(self.input[index].data.astype(self.dtype)), self.tgt[index].data.astype(self.dtype)))   ###? Do we need a precision of float64 if we want our normalize ECS to be precise to the mm ?
+    
+    
+class BaseDatamodule_ecs_classif(pl.LightningDataModule):
+    def __init__(self, input_da, dl_kw, x_min = 1459.0439165829073, x_max = 1552.54994512, dtype_str = 'float32'):
+        super().__init__()
+        self.input = input_da[0]
+        self.target = input_da[1]
+        self.dl_kw = dl_kw
+        
+        self.x_min = x_min
+        self.x_max = x_max
+        
+        self.dtype_str = dtype_str
+
+
+        self.test_time = None
+        self.test_var = None
+        self.test_lat = None
+        self.test_lon = None
+        self.test_z = None
+
+        self.train_ds = None
+        self.val_ds = None
+        self.test_ds = None
+
+        self.is_data_normed = False
+        
+
+    
+    def setup(self, stage):
+        train_time_idx, val_time_idx, test_time_idx = torch.utils.data.random_split(self.input.time.data,
+                                                                                    [0.7, 0.2, 0.1], 
+                                                                                    generator=torch.Generator().manual_seed(42))
+        if not self.is_data_normed:
+
+            if self.x_max is None or self.x_min is None:
+                self.x_min, self.x_max = np.nanmin(self.input.celerity.values), np.nanmax(self.input.celerity.values)
+            self.input = (self.input - self.x_min)/(self.x_max - self.x_min) # min max normalization, hard coded values for now because it saves computation time
+
+            self.is_data_normed = True
+        
+        if stage == 'fit':
+            self.train_ds = BaseDataset_ecs_classif(
+                self.input.isel(time=train_time_idx.indices), self.target.isel(time=train_time_idx.indices), dtype_str = self.dtype_str
+                )
+            self.val_ds = BaseDataset_ecs_classif(
+                self.input.isel(time=val_time_idx.indices), self.target.isel(time=val_time_idx.indices), dtype_str= self.dtype_str
+                )
+        if stage == 'test':
+
+            self.test_ds = BaseDataset_ecs_classif(
+                self.input.isel(time=test_time_idx.indices), self.target.isel(time=test_time_idx.indices), dtype_str = self.dtype_str
+            )
+            self.test_time = self.test_ds.tgt["time"]
+            self.test_lat = self.test_ds.tgt["lat"]
+            self.test_lon = self.test_ds.tgt["lon"]
+            self.test_z = self.test_ds.input["z"]
+
+    def train_dataloader(self):
+        return torch.utils.data.DataLoader(self.train_ds, shuffle=False, **self.dl_kw)
+    
+    def val_dataloader(self):
+        return torch.utils.data.DataLoader(self.val_ds, shuffle=False, **self.dl_kw)
+    
+    def test_dataloader(self):
+        return torch.utils.data.DataLoader(self.test_ds, shuffle=False, **self.dl_kw)
+    
+    def norm_stats(self, ipt, target):
+        mean, std = {}, {}
+        mean["input"] = ipt.mean()
+        std["input"] = ipt.std()
+        for j in target.data_vars:
+            mean[j] = target[j].mean()
+            std[j] = target[j].std()
+
+        return mean, std
+
+class BaseDataset_ecs_classif(torch.utils.data.Dataset):
+    def __init__(self, ipt, tgt, dtype_str = 'float32'):
+        super().__init__()
+        self.input, self.tgt = ipt.transpose('time', 'z', 'lat', 'lon'), tgt.transpose('time','z', 'lat', 'lon')   #tgt.to_array().transpose('time', 'variable', 'lat', 'lon')
+        self.dtype = getattr(np, dtype_str)
+        
+    def __len__(self):
+        return min(len(self.input.time), len(self.tgt.time))
+    
+    def __getitem__(self, index):
+        return TrainingItem._make((np.nan_to_num(self.input[index].data.astype(self.dtype)), self.tgt[index].data.astype(np.uint8)))   ###? Do we need a precision of float64 if we want our normalize ECS to be precise to the mm ?
     
 # class BaseDataModule(pl.LightningDataModule):
 #     def __init__(self, input_da, domains, xrds_kw, dl_kw, aug_kw=None, norm_stats=None, **kwargs):

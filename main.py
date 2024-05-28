@@ -1,4 +1,5 @@
 import hydra
+import torch
 from torch.utils.tensorboard import SummaryWriter
 from omegaconf import OmegaConf
 import os
@@ -14,7 +15,7 @@ def main(cfg):
     # writer = SummaryWriter()
     # writer.add_text("Hydra Config", OmegaConf.to_yaml(cfg))
     # writer.close()
-
+    #torch.backends.cudnn.allow_tf32 = False
     hydra.utils.call(cfg.entrypoints)
 
 if __name__ == '__main__':
