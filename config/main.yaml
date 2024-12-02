@@ -1,5 +1,5 @@
 entrypoints: ???
 defaults:
-  - xp: AE_without_AP_training  #acoustic_pred_training #enatl_natl #AE_without_AP_training  #AE_with_AP_training
+  - xp: autoencoder_V2 #gaussiankernel1d #autoencoder_V2 
   - _self_
 

@@ -1,0 +1,114 @@
+# @package _global_
+
+paths:
+    sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+    variables: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_at_0_regrid_0_1000m.nc
+
+normalization:
+  min_max:
+    x_min: 1459.0439165829073
+    x_max: 1545.8698054910844
+  mean_std:
+    mean: 1513.8417292146794 
+    std: 14.949060449731395 
+  mean_std_along_depth:
+    mean: null 
+    std: null 
+
+dtype: float32 #float16 #float64 
+
+device: 1  #or cpu ?  
+
+patience: 50
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  inference_mode: False
+  accelerator: gpu
+  devices: ${device}
+
+  check_val_every_n_epoch: 1
+  accumulate_grad_batches: 1
+  logger: 
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/gaussiankernel1d/
+    name: train_on_ecs_${model.train_on_ecs}
+    version: ${now:%Y-%m-%d_%H-%M}
+    #version: ${model_config.save_dir.${model_architecture}.version}
+    log_graph : False
+
+  min_epochs: 0
+  max_epochs: 1000
+  callbacks:
+    - _target_: pytorch_lightning.callbacks.LearningRateMonitor
+    - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+      monitor: val_loss
+      save_top_k: 1
+      filename: '{val_loss:.2f}-{epoch:02d}'
+      mode: min
+    - _target_: pytorch_lightning.callbacks.EarlyStopping
+      monitor: val_loss
+      min_delta: 0.
+      check_on_train_epoch_end: True
+      verbose: True
+      patience: ${trainer.max_epochs}
+      #patience: ${patience}
+    
+
+      
+
+datamodule:
+  _target_: src.data.BaseDatamodule
+  input_da: 
+    _target_: src.utils.load_ssf_ecs_da
+    ssf_da_path: ${paths.sound}
+    ecs_da_path: ${paths.variables}
+  dl_kw:
+    batch_size: 1
+    num_workers: 4
+  norm_stats:
+    method: mean_std #mean_std_along_depth #mean_std  #min_max
+    params: ${normalization.${datamodule.norm_stats.method}}
+
+  dtype_str: ${dtype}  
+
+
+
+
+
+model:
+  ae_ckpt_path: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/AE_CNN_pool_2D/pred_1_var_0_gradient_0_ecs_0/latent_dim_9_pooling_1_None_dropout_0_patience_5/None/2024-08-01_12-34/checkpoints/val_loss=0.01-epoch=18.ckpt  #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/AE_CNN_pool_2D/pred_1_var_0_gradient_1000_ecs_0/latent_dim_9_pooling_1_None_dropout_0_patience_2000/None/2024-07-17_14-02/checkpoints/val_loss=0.07-epoch=1085.ckpt 
+  _target_: src.gaussiankernel1d.LearnableGaussianKernel1d
+  opt_fn:
+    _target_: src.gaussiankernel1d.LearnableGaussianKernel1d.cosanneal_lr_adamw
+    _partial_: true
+    lr: 1e-3
+    T_max: ${trainer.max_epochs}
+    weight_decay: 1
+  depth_array: 
+    _target_: src.utils.get_depth_array
+    ssf_da_path: ${paths.sound}
+  train_on_ecs: True
+
+
+entrypoints:
+  - _target_: pytorch_lightning.seed_everything
+    seed: 333
+  - _target_: src.train.base_training
+    trainer: ${trainer}
+    lit_mod: ${model}
+    dm: ${datamodule}
+
+
+hydra:
+  run:
+    dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
+  job:
+    env_set: 
+      CUDA_VISIBLE_DEVICES: 7
+      
+
+# torch:
+#   backends:
+#     cudnn:
+#       allow_tf32: False

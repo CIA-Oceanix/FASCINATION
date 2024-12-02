@@ -1,0 +1,168 @@
+# @package _global_
+
+
+dtype: float32
+
+
+model_architecture: UNet
+dimensions: 3D
+
+
+normalization:
+  x_min: 1459.0439165829073
+  x_max: 1545.8698054910844
+
+
+ssp_path: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  inference_mode: false
+  accelerator: gpu
+  devices: 1
+  check_val_every_n_epoch: 1
+  accumulate_grad_batches: ${model_config.accumulate_grad_batches.${dimensions}}
+  logger:
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/ecs_classif/
+    name: ${model.model_name}
+    version: ${now:%Y-%m-%d_%H-%M}
+  min_epochs: 0
+  max_epochs: 1000
+  callbacks:
+  - _target_: pytorch_lightning.callbacks.LearningRateMonitor
+  - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: val_loss
+    save_top_k: 1
+    filename: '{val_loss:.2f}-{epoch:02d}'
+    mode: min
+  - _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: val_loss
+    min_delta: 0.0
+    check_on_train_epoch_end: true
+    patience: 5
+    verbose: true
+
+
+datamodule:
+  _target_: src.data.BaseDatamodule_ecs_classif
+  input_da:
+    _target_: src.utils.load_ssf_ecs_classif_da
+    ssf_da_path: ${ssp_path}
+    ecs_classif_da_path: ${model_config.ECS_classif_path.${model.model_name}}
+  dl_kw:
+    batch_size: ${model_config.batch_size.${dimensions}}
+    num_workers: 4
+  x_min: ${normalization.x_min}
+  x_max: ${normalization.x_max}
+  dtype_str: ${dtype}
+  model_name: ${model.model_name}
+
+
+model:
+  _target_: src.ecs_classification.ECS_classification
+  model_name: ${model_architecture}_${dimensions}
+  model_hparams: ${model_config.model_hparams.${model.model_name}}
+  opt_fn:
+    _target_: src.ecs_classification.ECS_classification.cosanneal_lr_adamw
+    _partial_: true
+    lr: 0.001
+    T_max: ${trainer.max_epochs}
+    weight_decay: 0.01
+  depth_array:
+    _target_: src.utils.get_depth_array
+    ssf_da_path: ${ssp_path}
+  loss_name: DiceBCELoss
+  loss_hparams: ${model_config.loss_hparams.${model.loss_name}}
+
+
+
+model_config:
+  model_hparams:
+
+    UNet_3D: &UNetDefaults
+      num_classes: 1
+      in_ch: 3
+      num_layers: 5
+      features_start: 64
+      bilinear: false
+      batch_norm: true
+      avg_pool: false
+      final_act_func_str: Sigmoid
+      dtype_str: ${dtype}
+
+    UNet_2D:
+      <<: *UNetDefaults
+      in_ch: 107
+
+    CNN_3D: &CNNDefaults
+      num_classes: 1
+      in_ch: 3
+      channels_start: 20
+      num_layers: 4
+      batch_norm: true
+      avg_pool: false
+      dtype_str: ${dtype}
+      final_act_func_str: Sigmoid
+      spatial_dim:
+      - 240
+      - 240
+
+    CNN_2D:
+      <<: *CNNDefaults
+      in_ch: 107
+
+
+  batch_size:
+    2D: 4
+    3D: 1
+
+  accumulate_grad_batches:
+    2D: 1
+    3D: 4
+
+  ECS_classif_path:
+    UNet_3D: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_3D_binary_classification_at_0_regrid_0_1000m.nc
+    UNet_2D: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_2D_binary_classification_at_0_regrid_0_1000m.nc
+    CNN_3D: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_2D_binary_classification_at_0_regrid_0_1000m.nc
+    CNN_2D: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_2D_binary_classification_at_0_regrid_0_1000m.nc
+
+
+  loss_hparams:
+    BCELoss:
+      weight: ${model_config.BCELoss_weight.${model.model_name}}
+      reduction: mean
+
+    DiceLoss:
+      epsilon: 1
+
+    DiceBCELoss:
+      epsilon: 1
+      weight: ${model_config.BCELoss_weight.${model.model_name}}
+      reduction: mean
+
+
+  BCELoss_weight:
+      UNet_3D: 145.
+      UNet_2D: .5
+      CNN_3D: .5
+      CNN_2D: .5
+
+    
+
+
+hydra:
+  run:
+    dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
+  job:
+    env_set: 
+      CUDA_VISIBLE_DEVICES: 2
+
+
+entrypoints:
+- _target_: pytorch_lightning.seed_everything
+  seed: 333
+- _target_: src.train.base_training
+  trainer: ${trainer}
+  lit_mod: ${model}
+  dm: ${datamodule}

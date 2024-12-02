@@ -2,12 +2,13 @@
 
 paths:
     sound: /DATASET/eNATL/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
-    variables: /DATASET/eNATL/eNATL60_BLB002_cutoff_freq_regrid_0_1000m.nc
+    variables: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_at_0_regrid_0_1000m.nc
 
 normalization:
-  x_min: 1438
-  x_max: 1552.54994512
+  x_min: 1459.0439165829073
+  x_max: 1545.8698054910844
 
+dtype: float32 #float16 #float64 
 
 trainer:
   _target_: pytorch_lightning.Trainer
@@ -21,11 +22,12 @@ trainer:
     #save_dir: ${hydra:runtime.output_dir}
     save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/accoustic_predictor/
     #name: ${hydra:runtime.choices.xp}
-    name: ${now:%Y-%m-%d_%H-%M}
-    version: ''
+    name: ${model.arch_shape}
+    #version: ${now:%Y-%m-%d_%H-%M}
+    version: pred_weight_${model.pred_weight}_classif_weight_${model.classif_weight}_${now:%Y-%m-%d_%H-%M}
 
   min_epochs: 0
-  max_epochs: 5
+  max_epochs: 1000
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -33,23 +35,40 @@ trainer:
       save_top_k: 1
       filename: '{val_loss:.2f}-{epoch:02d}'
       mode: min
+    - _target_: pytorch_lightning.callbacks.EarlyStopping
+      monitor: val_loss
+      min_delta: 1.0e-6
+      check_on_train_epoch_end: True
+      verbose: True
+      patience: 5
+
+      
 
 datamodule:
   _target_: src.data.BaseDatamodule
   input_da: 
-    _target_: src.utils.load_ssf_acoustic_variables
+    _target_: src.utils.load_ssf_ecs_da
     path1: ${paths.sound}
     path2: ${paths.variables}
   dl_kw: {batch_size: 4, num_workers: 4}
   x_min: ${normalization.x_min}
   x_max: ${normalization.x_max}
+  dtype_str: ${dtype}  
 
 model:
   _target_: src.acoustic_predictor.AcousticPredictor
   input_depth: 107
-  acoustic_variables: 2
-  lr: 0.005
+  acoustic_variables: 1
+  lr: 0.001
   T_max: 10
+  classif_weight: 0
+  pred_weight: 1
+  kernel_size: 8
+  arch_shape: 'dense_2D_CNN_ReLu'
+  dtype_str: ${dtype}  
+
+  
+
 
 
 
@@ -61,3 +80,12 @@ entrypoints:
     lit_mod: ${model}
     dm: ${datamodule}
 
+
+hydra:
+  run:
+    dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
+
+# torch:
+#   backends:
+#     cudnn:
+#       allow_tf32: False

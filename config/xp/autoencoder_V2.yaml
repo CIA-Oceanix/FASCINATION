@@ -1,0 +1,208 @@
+# @package _global_
+
+paths:
+    sound: /Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+    #variables: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_at_0_regrid_0_1000m.nc
+
+
+normalization:
+  min_max:
+    x_min: null #1459.0439165829073
+    x_max: null #1545.8698054910844
+  mean_std:
+    mean: null #1513.8417292146794 
+    std: null #14.949060449731395 
+  mean_std_along_depth:
+    mean: null 
+    std: null 
+
+
+
+dtype: float32 #float16 #float64 
+
+root_save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs #/DATASET/envs/o23gauvr/outputs #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs
+
+save_dir_name: test #channels_${model.model_hparams.channels_list}
+
+model_architecture: AE_CNN
+
+dimensions: 3D  #2D #3D
+
+patience: 5
+
+trainer:
+  _target_: pytorch_lightning.Trainer
+  inference_mode: False
+  accelerator: gpu
+  devices: 1
+  check_val_every_n_epoch: 1
+  accumulate_grad_batches: ${model_config.accumulate_grad_batches.${dimensions}}
+  logger: 
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: ${root_save_dir}/AE/${model.model_name}  #/DATASET/envs/o23gauvr/outputs/AE_V2/ #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/
+    name: ${save_dir_name}     #ecs_${model.loss_weight.ecs_weight}
+    version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.inflection_pos_weight}_inflection_value_${model.loss_weight.inflection_value_weight}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/n_profiles_${datamodule.n_profiles}/${now:%Y-%m-%d_%H-%M}
+    log_graph : True
+
+  max_epochs: 1
+  callbacks:
+    - _target_: pytorch_lightning.callbacks.LearningRateMonitor
+    - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+      monitor: val_loss
+      save_top_k: 1
+      filename: '{val_loss:.2f}-{epoch:02d}'
+      mode: min
+    - _target_: pytorch_lightning.callbacks.EarlyStopping
+      monitor: val_loss
+      verbose: True
+      patience: ${trainer.max_epochs}
+      min_delta: 1e-6
+      #patience: ${patience}
+    
+
+      
+
+datamodule:
+  _target_: src.autoencoder_datamodule.AutoEncoderDatamodule_${dimensions}
+  input_da: 
+    _target_: src.utils.load_ssp_da
+    ssf_da_path: ${paths.sound}
+  dl_kw:
+    batch_size: ${model_config.batch_size.${dimensions}}
+    num_workers: 2
+  norm_stats:
+    method:  mean_std #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
+    params: ${normalization.${datamodule.norm_stats.method}}
+  manage_nan: suppress
+  n_profiles: null #100000
+
+
+  depth_pre_treatment: 
+    # _target_: src.utils.generate_depth_pre_treatment_dic
+    # pooling_dim: 
+    method: none #pca
+    params: 50 #10 #none 
+    
+    #${model_config.depth_pre_treatment.${model_config.model_hparams.${model.model_name}.pooling_dim}.${datamodule.depth_pre_treatment.method}}
+
+  dtype_str: ${dtype}  
+
+
+
+model:
+  _target_: src.autoencoder_V2.AutoEncoder
+  model_name: ${model_architecture}_${dimensions}
+  model_hparams: ${model_config.model_hparams.${model.model_name}}
+  opt_fn:
+    _target_: src.utils.cosanneal_lr_adamw
+    _partial_: true
+    lr: 1e-3
+    T_max: ${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
+    weight_decay: 1e-3 #0 #1e-3
+  dim: ${dimensions}
+  loss_weight:
+    prediction_weight: 0.5 #0.5 #0.01 #1
+    max_position_weight: 0 #0.8 #0.01 #0
+    max_value_weight: 0 #0.1 #0.05 #0
+    gradient_weight: 0 #10000 #0
+    fft_weight: 0 #0.05 #0
+    weighted_weight: 1 #1 #0
+    inflection_pos_weight: 0 #0.01 #0
+    inflection_value_weight: 0 #0.05 #0
+    ecs_weight: 0 #0 #0
+
+
+
+
+model_config:
+
+
+  model_hparams:
+    AE_CNN_3D: &AE_CNN_Default
+      channels_list: [1,1] #[1,16,32,128,256,512] #[1,1] #[1,16,32,128,256,512]s
+      n_conv_per_layer: 1
+      padding: reflect
+      interp_size: 0
+      act_fn_str: Elu
+      final_act_fn_str: Linear #Linear
+      final_upsample_str: upsample_pooling #upsample  #upsample_pooling
+      upsample_mode: trilinear
+      pooling: None
+      pooling_dim: all #spatial #depth  #all
+      linear_layer: False
+      latent_size: 50
+      dropout_proba: 0
+      #dtype_str: ${dtype}
+
+
+
+    AE_CNN_2D:
+      <<: *AE_CNN_Default
+
+    AE_CNN_1D:
+      <<: *AE_CNN_Default
+      latent_size: 9
+
+      padding: linear
+
+
+  # datamodule:
+  #   1D: src.autoencoder_datamodule.AutoEncoderDatamodule_${dimensions}
+  #   2D: src.autoencoder_datamodule.AutoEncoderDatamodule_${dimensions}
+  #   3D: src.autoencoder_datamodule.AutoEncoderDatamodule_${dimensions}
+
+  # depth_pre_treatment:
+  #   spatial:
+  #     pca:
+  #       n_components: 10
+  #     AE_3D_pool_on_depth:
+  #       ckpt_path: null  
+  #     none: null
+      
+  #   depth: null
+  #   all: null
+  #   none: null
+
+
+
+  batch_size:
+    1D: 512
+    2D: 32
+    3D: 4
+
+  accumulate_grad_batches:
+    1D: 1
+    2D: 1
+    3D: 1
+
+  save_dir:
+    #AE_CNN_3D: latent_dim_${model.model_hparams.latent_dim}_num_layers_${model.model_hparams.num_layers}_linear_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
+    #AE_CNN_2D: latent_dim_${model.model_hparams.latent_dim}_num_layers_${model.model_hparams.num_layers}_linear_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
+    AE_CNN: channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_later_${model.model_hparams.linear_layer}_lattent_size_${model.model_hparams.latent_size}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding}/interp_size_${model.model_hparams.interp_size}/pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}_final_act_fn_${model.model_hparams.final_act_fn_str}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
+  
+
+    AE_CNN_pool_2D: latent_dim_${model.model_hparams.latent_dim}_pooling_${model.model_hparams.num_layers}_${model.model_hparams.pooling_str}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}/act_fn_${model.model_hparams.act_fn_str}_final_act_fn_${model.model_hparams.final_act_fn_str}_normalization_${datamodule.norm_stats.method}
+    AE_CNN_pool_1D: latent_dim_${model.model_hparams.latent_dim}_pooling_${model.model_hparams.num_layers}_${model.model_hparams.pooling_str}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
+
+
+entrypoints:
+  - _target_: pytorch_lightning.seed_everything
+    seed: 333
+  - _target_: src.train.base_training
+    trainer: ${trainer}
+    lit_mod: ${model}
+    dm: ${datamodule}
+    dim: ${dimensions}
+
+
+hydra:
+  run:
+    dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
+  job:
+    env_set: 
+      CUDA_VISIBLE_DEVICES: 1
+
+# torch:
+#   backends:n
+#     cudnn:
+#       allow_tf32: False
