@@ -10,7 +10,7 @@ declare -a norm_stats="mean_std"
 declare -a pre_treatment_method="pca" #none #pca
 declare -a cuda=3
 declare -a max_epoch=30
-declare -a root_dir="/DATASET/envs/o23gauvr/outputs"
+declare -a root_dir="/Odyssey/private/o23gauvr/outputs"
 declare -a save_dir="'test_on_loss_weights'" 
 
 #skip_first=true

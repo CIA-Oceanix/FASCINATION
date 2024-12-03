@@ -41,8 +41,10 @@ def load_model(model_ckpt_path: str,
     cfg = get_cfg_from_ckpt_path(model_ckpt_path, pprint = False)
     
     lit_mod = hydra.utils.call(cfg.model)
-
-    lit_mod.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
+    
+    checkpoint = torch.load(model_ckpt_path, weights_only=True)
+    lit_mod.load_state_dict(checkpoint["state_dict"])
+    #lit_mod.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
 
     lit_mod.verbose = verbose
     

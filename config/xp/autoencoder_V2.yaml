@@ -44,7 +44,7 @@ trainer:
     version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.inflection_pos_weight}_inflection_value_${model.loss_weight.inflection_value_weight}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/n_profiles_${datamodule.n_profiles}/${now:%Y-%m-%d_%H-%M}
     log_graph : True
 
-  max_epochs: 10
+  max_epochs: 1
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint
@@ -80,8 +80,8 @@ datamodule:
   depth_pre_treatment: 
     # _target_: src.utils.generate_depth_pre_treatment_dic
     # pooling_dim: 
-    method: none #pca
-    params: 50 #10 #none 
+    method: pca #pca
+    params: 1 #10 #none 
     
     #${model_config.depth_pre_treatment.${model_config.model_hparams.${model.model_name}.pooling_dim}.${datamodule.depth_pre_treatment.method}}
 
@@ -128,7 +128,7 @@ model_config:
       final_upsample_str: upsample_pooling #upsample  #upsample_pooling
       upsample_mode: trilinear
       pooling: None
-      pooling_dim: all #spatial #depth  #all
+      pooling_dim: spatial #spatial #depth  #all
       linear_layer: False
       latent_size: 50
       dropout_proba: 0

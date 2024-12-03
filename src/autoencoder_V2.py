@@ -104,12 +104,12 @@ class AutoEncoder(pl.LightningModule):
         
         self.log("prediction test mse",  nn.MSELoss()(ssp_pred, ssp_truth), on_epoch = True)
         
-        
-        coordinates = (self.z_tens,)
-        ssp_gradient_truth = torch.gradient(input = ssp_truth, spacing = coordinates, dim=1)[0]
-        ssp_gradient_pred = torch.gradient(input = ssp_pred, spacing = coordinates, dim=1)[0]
-        self.log("gradient test mse", nn.MSELoss()(ssp_gradient_truth, ssp_gradient_pred) , on_epoch = True)  
-        
+        if len(self.z_tens) > 1:
+            coordinates = (self.z_tens,)
+            ssp_gradient_truth = torch.gradient(input = ssp_truth, spacing = coordinates, dim=1)[0]
+            ssp_gradient_pred = torch.gradient(input = ssp_pred, spacing = coordinates, dim=1)[0]
+            self.log("gradient test mse", nn.MSELoss()(ssp_gradient_truth, ssp_gradient_pred) , on_epoch = True)  
+            
         
         # ecs_truth = self.ecs_explicit_model(ssp_truth)
         # ecs_pred =  self.ecs_explicit_model(ssp_pred)
@@ -189,16 +189,16 @@ class AutoEncoder(pl.LightningModule):
         if self.loss_weight['max_value_weight'] != 0:
             full_loss = full_loss + self.loss_weight['max_value_weight'] * max_value_loss
             
-        
-        coordinates = (self.z_tens,)
-        ssp_gradient_truth = torch.gradient(input = self.ssp_truth, spacing = coordinates, dim=1)[0]
-        ssp_gradient_pred = torch.gradient(input = ssp_pred, spacing = coordinates, dim=1)[0]
+        if len(self.z_tens) > 1: 
+            coordinates = (self.z_tens,)
+            ssp_gradient_truth = torch.gradient(input = self.ssp_truth, spacing = coordinates, dim=1)[0]
+            ssp_gradient_pred = torch.gradient(input = ssp_pred, spacing = coordinates, dim=1)[0]
 
-        gradient_loss =  nn.MSELoss()(ssp_gradient_truth, ssp_gradient_pred)            
-        self.log(f"gradient loss", gradient_loss, prog_bar=False, on_step=None, on_epoch=True)
-        
-        if self.loss_weight['gradient_weight'] != 0:
-            full_loss = full_loss + self.loss_weight['gradient_weight'] * gradient_loss
+            gradient_loss =  nn.MSELoss()(ssp_gradient_truth, ssp_gradient_pred)            
+            self.log(f"gradient loss", gradient_loss, prog_bar=False, on_step=None, on_epoch=True)
+            
+            if self.loss_weight['gradient_weight'] != 0:
+                full_loss = full_loss + self.loss_weight['gradient_weight'] * gradient_loss
             
 
         
@@ -276,7 +276,7 @@ class AutoEncoder(pl.LightningModule):
         if self.depth_pre_treatment["method"] == "pca":
             tens_shape = torch.Size([batch.shape[0], len(self.depth_arr), *batch.shape[2:]])
             pca = self.depth_pre_treatment["fitted_pca"]
-            self.dif_pca_4D = DF.Differentiable4dPCA(pca, tens_shape=tens_shape, device=batch.device,dtype=batch.dtype)     
+            self.dif_pca_4D = DF.Differentiable4dPCA(pca, original_shape=tens_shape, device=batch.device,dtype=batch.dtype)     
             
             self.max_significant_depth = 10 ###TODO a faire varier, mettre en hyperparametres
 
