@@ -1,25 +1,25 @@
 #!/bin/bash
 
 
-declare -a channels_list=([1,8]) #[1,8] [1,8,8,8] [1,8,8,8,8]
-declare -a loss_weights_list=("0.01,1,10000,0.01,0.05,0.01,0.05,0.05" "1,0,0,0,0,0,0,0" "0.5,1,0,0,0,0,0,0" "0,1,0,0,0,0,0,0" "1,0,10000,0,0,0,0,0" "0,0,1,0,0,0,0,0" "1,0,0,0,0,0.01,1,0" "0,0,0,0,0,1,1,0" "1,0,0,0.01,1,0,0,0" "0,0,0,1,1,0,0,0" "1,0,0,0,0,0,0,0.1" "0,0,0,0,0,0,0,1" )  #"0.01,1,10000,0.01,0.05,0.01,0.05,0.0000" "1,0,10000,0,0,0,0,0" #"0.01,1,10000,0,0,0.1,0.5,0" "0.01,1,10000,0,0,0.01,0.5,0" "0.01,1,10000,0.01,0.5,0,0.5,0" "0.01,1,10000,0.1,0.5,0,0,0" #"0.01,1,10000,0.1,0.1,0,0,0" 
+declare -a channels_list=([1,8] [1,8,8] [1,8,8,8] [1,8,8,8,8]) # #[1,8] 
+declare -a loss_weights_list=("10,100,1000000,0.01,100,0.01,100,0.1" 0.5,1,10000,0.01,0.05,0.01,0.05,0.0000 "1,0,1000000,0,0,0,0,0" "1,1,1000000,0,0,0,0,0") # #"0.01,1,10000,0.01,0.05,0.01,0.05,0.0000" "1,0,10000,0,0,0,0,0" #"0.01,1,10000,0,0,0.1,0.5,0" "0.01,1,10000,0,0,0.01,0.5,0" "0.01,1,10000,0.01,0.5,0,0.5,0" "0.01,1,10000,0.1,0.5,0,0,0"
 
 
 declare -a pooling_dim="depth"
 declare -a norm_stats="mean_std"
 declare -a pre_treatment_method="none" #none #pca
-declare -a interp_size=20
+declare -a interp_size=5
 
-declare -a cuda=3
+declare -a current_branch=$(git rev-parse --abbrev-ref HEAD)
+declare -a cuda=2
 declare -a max_epoch=40
 declare -a root_dir="/Odyssey/private/o23gauvr/outputs"
-declare -a save_dir="'test_on_loss_weights'" 
+declare -a save_dir="'$current_branch/test_on_loss_weights'" 
 
 #skip_first=true
 
 kinit -l 5d
 krenew -K 10 &
-
 
 
 
@@ -84,7 +84,7 @@ do
     datamodule.norm_stats.method=$norm_stats \
     datamodule.depth_pre_treatment.method=$pre_treatment_method \
     datamodule.depth_pre_treatment.params=107 \
-    model_config.model_hparams.AE_CNN_3D.channels_list='[1,1]' \
+    model_config.model_hparams.AE_CNN_3D.channels_list='[1,8]' \
     model_config.model_hparams.AE_CNN_3D.n_conv_per_layer=1 \
     model_config.model_hparams.AE_CNN_3D.padding=reflect \
     model_config.model_hparams.AE_CNN_3D.interp_size=0 \

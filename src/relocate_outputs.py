@@ -25,7 +25,7 @@ def relocate_outputs(outputs_path, dir_to_ignore,
         
         ckpt_path = str(ckpt_path)
     
-        if any(dir_name in ckpt_path for dir_name in dir_to_ignore):
+        if any(dir_name in ckpt_path.split("/") for dir_name in dir_to_ignore):
             print(f"Skipping {ckpt_path} because it contains a directory to ignore.")
             continue
     
@@ -86,12 +86,13 @@ def relocate_outputs(outputs_path, dir_to_ignore,
         # dest_dir =  f"{output_path}AE/" \
         #             f"{model_name}/" \
         dest_dir = f"{save_dir}/" \
-                    f"channels_{channels_list}/" \
                     f"pred_{prediction_weight}_grad_{gradient_weight}_max_pos_{max_weight}_fft_{fft_weight}_weighted_{weighted_weight}_inflexion_{inflexion_weight}/" \
+                    f"pooling_{pooling}_on_dim_{pooling_dim}/" \
+                    f"channels_{channels_list}/" \
                     f"depth_pre_treatment_{depth_pre_treatment}/" \
                     f"upsample_mode_{upsample_mode}/" \
                     f"linear_layer_{linear_layer}_lattent_size_{latent_size}/" \
-                    f"{n_conv_per_layer}_conv_per_layer/padding_{padding}/interp_size_{interp_size}/pooling_{pooling}_on_dim_{pooling_dim}/" \
+                    f"{n_conv_per_layer}_conv_per_layer/padding_{padding}/interp_size_{interp_size}/" \
                     f"final_upsample_{final_upsample_str}/act_fn_{act_fn_str}_final_act_fn_{final_act_fn_str}/" \
                     f"lr_{lr}/normalization_{normalization_method}/manage_nan_{manage_nan}/n_profiles_{n_profiles}/{date}"
                     # 
@@ -143,11 +144,11 @@ def remove_empty_dirs(output_path):
 
 if __name__ == "__main__":
     
-    output_path = "outputs/AE/AE_CNN_3D/"
-    save_dir = "/DATASET/envs/o23gauvr/outputs/AE/AE_CNN_3D/"
+    output_path = "outputs/remote/AE_CNN_3D/test_on_loss_weights/pred_10_grad_1000000_max_pos_0.01_max_value_100_fft_0.1_weighted_100_inflection_pos_0.01_inflection_value_100"
+    save_dir = "outputs/AE/AE_CNN_3D/visualisation"
 
-    dir_to_ignore = ["test"]
+    dir_to_ignore = [""]
     
     print("Relocating outputs directories")
-    relocate_outputs(output_path, dir_to_ignore, save_dir = save_dir ,delete_src = True)
+    relocate_outputs(output_path, dir_to_ignore, save_dir = save_dir ,delete_src = False)
     

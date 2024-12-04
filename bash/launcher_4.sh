@@ -2,7 +2,7 @@
 
 
 declare -a channels_list=([1,8]) #[1,8] [1,8,8,8] [1,8,8,8,8]
-declare -a loss_weights_list=("0.5,1,0,0.1,0.5,0,0,0" "0.5,1,0,0.01,0.5,0,0,0" "0.2,1,0,0,0,0,0,0" "1,0,0,0,0,0,0,0")
+declare -a loss_weights_list=("0.5,1,0,0.1,0.5,0,0,0" "1,0,0,0,0,0,0,0")
 declare -a pca_components=(1 2 3 4 5 6 7 8 9 10)
 
 declare -a pooling_dim="spatial"
@@ -11,7 +11,7 @@ declare -a pre_treatment_method="pca" #none #pca
 declare -a cuda=3
 declare -a max_epoch=30
 declare -a root_dir="/Odyssey/private/o23gauvr/outputs"
-declare -a save_dir="'test_on_loss_weights'" 
+declare -a save_dir="'test_on_loss_weights/pca_pre_treatment'" 
 
 #skip_first=true
 

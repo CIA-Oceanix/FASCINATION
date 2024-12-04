@@ -80,7 +80,7 @@ datamodule:
   depth_pre_treatment: 
     # _target_: src.utils.generate_depth_pre_treatment_dic
     # pooling_dim: 
-    method: pca #pca
+    method: none #pca
     params: 1 #10 #none 
     
     #${model_config.depth_pre_treatment.${model_config.model_hparams.${model.model_name}.pooling_dim}.${datamodule.depth_pre_treatment.method}}
@@ -178,7 +178,7 @@ model_config:
   save_dir:
     #AE_CNN_3D: latent_dim_${model.model_hparams.latent_dim}_num_layers_${model.model_hparams.num_layers}_linear_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
     #AE_CNN_2D: latent_dim_${model.model_hparams.latent_dim}_num_layers_${model.model_hparams.num_layers}_linear_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
-    AE_CNN: channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_later_${model.model_hparams.linear_layer}_lattent_size_${model.model_hparams.latent_size}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding}/interp_size_${model.model_hparams.interp_size}/pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}_final_act_fn_${model.model_hparams.final_act_fn_str}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
+    AE_CNN: pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_later_${model.model_hparams.linear_layer}_lattent_size_${model.model_hparams.latent_size}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding}/interp_size_${model.model_hparams.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}_final_act_fn_${model.model_hparams.final_act_fn_str}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
   
 
     AE_CNN_pool_2D: latent_dim_${model.model_hparams.latent_dim}_pooling_${model.model_hparams.num_layers}_${model.model_hparams.pooling_str}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}/act_fn_${model.model_hparams.act_fn_str}_final_act_fn_${model.model_hparams.final_act_fn_str}_normalization_${datamodule.norm_stats.method}

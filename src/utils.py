@@ -10,6 +10,7 @@ import pickle
 from pathlib import Path
 import torch
 import numpy as np
+from omegaconf import DictConfig
 
 
 
@@ -42,9 +43,11 @@ def load_model(model_ckpt_path: str,
     
     lit_mod = hydra.utils.call(cfg.model)
     
-    checkpoint = torch.load(model_ckpt_path, weights_only=True)
-    lit_mod.load_state_dict(checkpoint["state_dict"])
-    #lit_mod.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
+    # torch.serialization.add_safe_globals([DictConfig])
+
+    # checkpoint = torch.load(model_ckpt_path, weights_only=True)
+    # lit_mod.load_state_dict(checkpoint["state_dict"])
+    lit_mod.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
 
     lit_mod.verbose = verbose
     
