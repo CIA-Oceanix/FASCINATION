@@ -80,8 +80,8 @@ datamodule:
   depth_pre_treatment: 
     # _target_: src.utils.generate_depth_pre_treatment_dic
     # pooling_dim: 
-    method: pca #pca
-    params: 1 #10 #none 
+    method: none #pca
+    params: 10 #10 #none 
     
     #${model_config.depth_pre_treatment.${model_config.model_hparams.${model.model_name}.pooling_dim}.${datamodule.depth_pre_treatment.method}}
 
@@ -94,21 +94,21 @@ model:
   model_name: ${model_architecture}_${dimensions}
   model_hparams: ${model_config.model_hparams.${model.model_name}}
   opt_fn:
-    _target_: src.utils.cosanneal_lr_adamw
+    _target_: src.autoencoder_V2.AutoEncoder.cosanneal_lr_adamw
     _partial_: true
     lr: 1e-3
     T_max: ${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
     weight_decay: 1e-3 #0 #1e-3
   dim: ${dimensions}
   loss_weight:
-    prediction_weight: 0.5 #0.5 #0.01 #1
-    max_position_weight: 0 #0.8 #0.01 #0
-    max_value_weight: 0 #0.1 #0.05 #0
-    gradient_weight: 0 #10000 #0
-    fft_weight: 0 #0.05 #0
-    weighted_weight: 1 #1 #0
-    inflection_pos_weight: 0 #0.01 #0
-    inflection_value_weight: 0 #0.05 #0
+    prediction_weight: 1e1 #0.5 #0.01 #1
+    weighted_weight: 1e2 #0.1 #0
+    gradient_weight: 1e6 #0.1 #0
+    max_position_weight: 1e-2 #0.8 #0.01 #0
+    max_value_weight: 1e2 #0.1 #0.05 #0
+    inflection_pos_weight: 1e-2 #0.01 #0
+    inflection_value_weight: 1e2 #0.05 #0
+    fft_weight: 1e-1 #0.1 #0
     ecs_weight: 0 #0 #0
 
 
@@ -128,7 +128,7 @@ model_config:
       final_upsample_str: upsample_pooling #upsample  #upsample_pooling
       upsample_mode: trilinear
       pooling: None
-      pooling_dim: spatial #spatial #depth  #all
+      pooling_dim: all #spatial #depth  #all
       linear_layer: False
       latent_size: 50
       dropout_proba: 0

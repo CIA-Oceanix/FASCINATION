@@ -194,14 +194,12 @@ def cosanneal_lr_adamw(self, lr, T_max, weight_decay=0.):
             opt, T_max=T_max,
         ),
     }
-            
-def check_differentiable(input, model, verbose=True, raise_error=False):
 
 
+def check_differentiable(input, model, loss_fn, verbose=True, raise_error=False):
     torch.autograd.set_detect_anomaly(True)        
 
     for name, param in model.named_parameters():
-
         if param.numel() == 0:
             continue
 
@@ -217,20 +215,18 @@ def check_differentiable(input, model, verbose=True, raise_error=False):
     # Handle case where model returns a tuple
     if isinstance(z, tuple):
         z = z[0]  # Select the first tensor from the tuple
-    
-    # Define a simple loss as the sum of the output tensor
-    loss = z.sum()
- 
+
+    # Compute the actual loss using the provided loss function
+    loss = loss_fn(input,z)
+
     try:
         # Backward pass
         loss.backward(retain_graph=True)
-        
     except RuntimeError as e:
         raise ValueError("Anomaly detected:", e)
     
     # Check gradients for each model parameter
     for name, param in model.named_parameters():
-        
         if param.numel() == 0:
             continue
 
@@ -240,18 +236,16 @@ def check_differentiable(input, model, verbose=True, raise_error=False):
             elif verbose:
                 print(f"No gradient computed for {name}")
         elif verbose:
-            pass
-            #print(f"Gradient computed for {name}: {param.grad}")
-        
+            print(f"Gradient computed for {name}: {param.grad.mean()}")
+
     # Check if gradient is computed for the input tensor
     if input.grad is None:
         if raise_error:
             raise RuntimeError("No gradient computed for the input tensor")
         elif verbose:
             print("No gradient computed for the input tensor")
-    elif verbose: 
-        pass
-        #print(f"Gradient computed for the input tensor: {input.grad}")
+
+
 
 
 def check_abnormal_grad(model, input, writter, verbose=True, raise_error=False):
