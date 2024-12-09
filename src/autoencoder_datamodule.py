@@ -254,6 +254,10 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
     
     def setup(self, stage):
 
+        required_dtype = getattr(np,self.dtype_str)
+        if self.input.dtype != required_dtype:
+            self.input = self.input.astype(required_dtype)
+
         
         if not self.is_data_normed:
 
@@ -363,17 +367,15 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
         
         if stage == 'fit':
             
-            train_data_da = self.input.isel(time=self.train_time_idx)
+            self.train_data_da = self.input.isel(time=self.train_time_idx)
                 
             val_data_da = self.input.isel(time=self.val_time_idx)
 
             self.train_ds = AE_BaseDataset_3D(
-                    train_data_da, dtype_str= self.dtype_str
-                    )
+                    self.train_data_da)
                     
             self.val_ds = AE_BaseDataset_3D(
-                    val_data_da, dtype_str= self.dtype_str
-                    )
+                    val_data_da)
             
         
         if stage == 'test':
@@ -381,8 +383,8 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
             self.test_data_da = self.input.isel(time=self.test_time_idx)
 
             self.test_ds = AE_BaseDataset_3D(
-                self.test_data_da, dtype_str = self.dtype_str
-            )
+                self.test_data_da
+                )
             
             
             # self.test_time = self.test_ds.input["time"]
@@ -438,18 +440,17 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
     
 
 class AE_BaseDataset_3D(torch.utils.data.Dataset):
-    def __init__(self, ipt, dtype_str = 'float32'):
+    def __init__(self, ipt):
         super().__init__()
         
         self.input = ipt.transpose('time', 'z', 'lat', 'lon')
 
-        self.dtype = getattr(np, dtype_str)
         
     def __len__(self):
         return len(self.input.time)
     
     def __getitem__(self, index):
-        return self.input[index].data.astype(self.dtype) 
+        return self.input[index].data
 
 
     
