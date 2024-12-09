@@ -23,7 +23,7 @@ from src.utils import *
 
 class NoConvAE(nn.Module):
     def __init__(self, 
-                 n:int, 
+                 n_layers:int, 
                  pooling_dim:str = "spatial",
                  pooling_mode:str = "Avg"):
 
@@ -61,9 +61,9 @@ class NoConvAE(nn.Module):
 
             
 
-        self.encoder = nn.Sequential(*[pool_layer for i in range(n)])
+        self.encoder = nn.Sequential(*[pool_layer for i in range(n_layers)])
     
-        self.decoder = nn.Sequential(*[upsample_layer for i in range(n-1)])
+        self.decoder = nn.Sequential(*[upsample_layer for i in range(n_layers-1)])
 
         self.decoder.append(nn.Upsample(size=None, mode=self.upsample_mode))
 
@@ -91,7 +91,7 @@ if __name__ == "__main__":
 
     gpu = 2
 
-    pca_list = np.arange(1,108)  #[1, 10, 50, 100, 107] #np.arange(107,108) 
+    pca_list = np.arange(1,108) #[1, 10, 30, 50, 100, 107] #np.arange(1,108)  #[1, 10, 50, 100, 107] #np.arange(107,108) 
 
     ae_rmse_dict = {"SSP":{},
                     "ECS":{}}
@@ -114,7 +114,7 @@ if __name__ == "__main__":
     cfg = OmegaConf.load(cfg_path)
     display(Markdown("""```yaml\n\n""" +yaml.dump(OmegaConf.to_container(cfg), default_flow_style=None, indent=2)+"""\n\n```"""))
 
-    trainer = Trainer(inference_mode = True)
+    #trainer = Trainer(inference_mode = True)
 
     dm_dict = cfg.datamodule
     dm = call(dm_dict) #hydra.utils.call(dm_dict)
@@ -175,5 +175,5 @@ if __name__ == "__main__":
             ae_rmse_dict["ECS"][f"Pool_upsample_pca_{n_components}"][pca_reduced_bottleneck_shape] = np.sqrt(np.mean((ecs_truth - ecs_pred) ** 2))
 
 
-    with open(f'pickle/pooling_upsampling_pca_pre_treatment_rmse_norm_{not(unorm)}.pkl', 'wb') as f:
+    with open(f'pickle/pooling_upsampling_pca_pre_treatment_rmse__all_components_norm_{not(unorm)}.pkl', 'wb') as f:
         pickle.dump(ae_rmse_dict, f)

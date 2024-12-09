@@ -47,7 +47,7 @@ def load_model(model_ckpt_path: str,
 
     # checkpoint = torch.load(model_ckpt_path, weights_only=True)
     # lit_mod.load_state_dict(checkpoint["state_dict"])
-    lit_mod.load_state_dict(torch.load(model_ckpt_path)["state_dict"])
+    lit_mod.load_state_dict(torch.load(model_ckpt_path, map_location=device)["state_dict"])
 
     lit_mod.verbose = verbose
     
@@ -64,43 +64,36 @@ def load_model(model_ckpt_path: str,
 
 
 
-def loading_datamodule_phase(dm, device = "cpu", phase = "fit"):
+
+def loading_datamodule_phase(dm, phase = "fit"):
     
 
     dm.setup(stage = phase) 
     
     if phase == "fit": 
-        ssp_ds = dm.train_dataloader().dataset.input
+        ssp_arr = dm.train_data_da.data 
 
     elif phase == "test":
-        ssp_ds = dm.test_dataloader().dataset.input
-      
-        
-    ssp_arr = ssp_ds.data
-    ssp_tens = torch.tensor(ssp_arr).float().to(device)
-    
-                
-    return ssp_arr, ssp_tens, dm
+        ssp_arr = dm.test_data_da.data
+
+    #ssp_tens = torch.tensor(ssp_arr).float().to(device)
+                  
+    return ssp_arr, dm
 
 
 
-def loading_datamodule(dm, device = "cpu"):
+def loading_datamodule(dm):
     
     dm.setup(stage="fit") 
     dm.setup(stage="test") 
+        
+    train_ssp_arr = dm.train_data_da.data
+    #train_ssp_tens = torch.tensor(train_ssp_arr).float().to(device)
     
-    coords = dm.test_dataloader().dataset.input.coords
-    
-    train_ssp_ds = dm.train_dataloader().dataset.input
-    train_ssp_arr = train_ssp_ds.dropna(dim='lat').data
-    train_ssp_tens = torch.tensor(train_ssp_arr).float().to(device)
-    
-
-    test_ssp_ds = dm.test_dataloader().dataset.input
-    test_ssp_arr = test_ssp_ds.dropna(dim='lat').data
-    test_ssp_tens = torch.tensor(test_ssp_arr).float().to(device)
+    test_ssp_arr = dm.test_data_da.data
+    #test_ssp_tens = torch.tensor(test_ssp_arr).float().to(device)
                 
-    return train_ssp_tens, test_ssp_tens, dm, coords
+    return train_ssp_arr, test_ssp_arr, dm
 
 
 
@@ -320,3 +313,42 @@ def check_abnormal_grad(model, input, writter, verbose=True, raise_error=False):
         #         print(f"input gradient mean is nan")
         #     elif raise_error:
         #         raise RuntimeError(f"input gradient mean is nan")
+
+if __name__ == "__main__":
+
+    import sys
+
+    running_path = "/homes/o23gauvr/Documents/thèse/code/FASCINATION/"
+    sys.path.insert(0,running_path)
+    os.chdir(running_path)
+
+    cfg_path = "config/xp/autoencoder_V2.yaml"
+    cfg = OmegaConf.load(cfg_path)
+    # Load config
+    dm = hydra.utils.call(cfg.datamodule)
+
+    # Load data using loading_datamodule_phase
+    train_arr_1, dm = loading_datamodule_phase(dm, phase='fit') #np.array([0]), np.array([0]), dm #
+
+
+    # Load data using loading_datamodule
+    train_arr_2, test_arr_2, dm  = loading_datamodule(dm)
+
+    # Compare datasets
+    print("Loading datamodule phase:")
+    print("Numpy")
+    print("Shape:", train_arr_1.shape)
+    print("Mean:", np.mean(train_arr_1))
+    print("Std Dev:", np.std(train_arr_1))
+
+    print("\nTrain Data Summary:")
+    print("Shape:", train_arr_2.shape)
+    print("Mean:", np.mean(train_arr_2))
+    print("Std Dev:", np.std(train_arr_2))
+
+    # Check for differences
+    differences = np.sum(train_arr_1 != train_arr_2)
+    print("\nNumber of differences between datasets:", differences)
+
+    print()
+

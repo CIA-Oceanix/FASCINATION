@@ -22,7 +22,7 @@ from src.utils import *
 
 if __name__ == "__main__":
 
-    unorm = False 
+    unorm = True 
     
     cfg_path = "config/xp/autoencoder_V2.yaml"
     cfg = OmegaConf.load(cfg_path)
@@ -51,7 +51,7 @@ if __name__ == "__main__":
     rmse_dict_pca_ecs_per_components = {}
     
 
-    for n_components in tqdm(range(1,108), unit = "components", desc = "Computing PCA components"):
+    for n_components in tqdm(range(106,108), unit = "components", desc = "Computing PCA components"):
         pca = PCA(n_components = n_components, svd_solver = 'auto')
         pca.fit(train_ssp_arr.transpose(0,2,3,1).reshape(-1,107))
         pca_dict[n_components] = pca

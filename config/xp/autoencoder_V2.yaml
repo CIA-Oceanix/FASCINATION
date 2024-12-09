@@ -81,7 +81,7 @@ datamodule:
     # _target_: src.utils.generate_depth_pre_treatment_dic
     # pooling_dim: 
     method: none #pca
-    params: 1 #10 #none 
+    params: 107 #10 #none 
     
     #${model_config.depth_pre_treatment.${model_config.model_hparams.${model.model_name}.pooling_dim}.${datamodule.depth_pre_treatment.method}}
 

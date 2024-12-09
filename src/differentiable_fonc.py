@@ -56,6 +56,7 @@ class Differentiable4dPCA(nn.Module):
         self.register_buffer('components_', torch.tensor(pca_object.components_, dtype=dtype, device=device))
         self.register_buffer('mean_', torch.tensor(pca_object.mean_, dtype=dtype, device=device))
 
+
     @torch.no_grad()
     def transform(self, x: torch.Tensor) -> torch.Tensor:
         """
