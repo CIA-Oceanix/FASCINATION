@@ -34,7 +34,7 @@ def differentiable_sign(input, tau: float = 10):
 
 
 class Differentiable4dPCA(nn.Module):
-    def __init__(self, pca_object, original_shape: tuple, device: str = "cpu", dtype=torch.float64):
+    def __init__(self, pca = PCA(), batch_shape = None, device: str = "cpu", dtype=torch.float64):
         """
         Initialize the Differentiable PCA class with the fitted PCA sklearn object.
 
@@ -45,19 +45,22 @@ class Differentiable4dPCA(nn.Module):
             dtype (torch.dtype): Data type of the tensors.
         """
         super().__init__()
-        expected_features = pca_object.components_.shape[1]
-        assert original_shape[1] == expected_features, (
-            f"Expected feature dimension {expected_features}, but got {original_shape[1]}"
-        )
-        self.n_components = pca_object.n_components
-        self.original_shape = original_shape
 
-        # Register PCA components and mean as buffers and move to the specified device
-        self.register_buffer('components_', torch.tensor(pca_object.components_, dtype=dtype, device=device))
-        self.register_buffer('mean_', torch.tensor(pca_object.mean_, dtype=dtype, device=device))
+        self.device = device
+        self.dtype = dtype  
+
+        if pca.n_components is None:
+            pca.fit(np.array([[0]]))
+
+        self.n_components = pca.n_components
+
+        # Register PCA components and mean as buffers
+        self.register_buffer('components_', torch.tensor(pca.components_, device=device, dtype=dtype))
+        self.register_buffer('mean_', torch.tensor(pca.mean_, device=device, dtype=dtype))
+
+        self.batch_shape = batch_shape
 
 
-    @torch.no_grad()
     def transform(self, x: torch.Tensor) -> torch.Tensor:
         """
         Apply PCA transformation on 4D input tensor.
@@ -68,16 +71,15 @@ class Differentiable4dPCA(nn.Module):
         Returns:
             torch.Tensor: Transformed tensor of shape (N, n_components, H, W).
         """
-        assert x.dim() == 4, f"Expected 4D tensor, but got {x.dim()}D tensor."
-        assert x.shape[1] == self.original_shape[1], (
-            f"Expected feature dimension {self.original_shape[1]}, but got {x.shape[1]}"
-        )
-        assert x.dtype == self.components_.dtype, (
-            f"Expected dtype {self.components_.dtype}, but got {x.dtype}"
-        )
+
+        # Update dtype of components and mean if necessary
+        if x.dtype != self.components_.dtype:
+            self.components_ = self.components_.to(dtype=x.dtype)
+            self.mean_ = self.mean_.to(dtype=x.dtype)
+
 
         # Reshape to (N * H * W, features)
-        x_reshaped = x.permute(0, 2, 3, 1).reshape(-1, self.original_shape[1])
+        x_reshaped = x.permute(0, 2, 3, 1).reshape(-1, self.batch_shape[1])
 
         # Center the data
         x_centered = x_reshaped - self.mean_
@@ -90,7 +92,7 @@ class Differentiable4dPCA(nn.Module):
 
         return x_transformed
 
-    @torch.no_grad()
+
     def inverse_transform(self, x_transformed: torch.Tensor) -> torch.Tensor:
         """
         Reconstruct the original 4D tensor from its PCA-transformed form.
@@ -108,7 +110,7 @@ class Differentiable4dPCA(nn.Module):
         x_reconstructed = torch.matmul(x_transformed, self.components_) + self.mean_
 
         # Reshape back to original 4D shape
-        x_reconstructed = x_reconstructed.reshape(self.original_shape[0], self.original_shape[2], self.original_shape[3], self.original_shape[1]).permute(0, 3, 1, 2)
+        x_reconstructed = x_reconstructed.reshape(self.batch_shape[0], self.batch_shape[2], self.batch_shape[3], self.batch_shape[1]).permute(0, 3, 1, 2)
 
         return x_reconstructed
 
@@ -163,7 +165,7 @@ if __name__ == "__main__":
     # Initialize Differentiable4dPCA
     original_shape = x_np.shape
     device = "cpu"  # or "cuda" if available
-    pca_module = Differentiable4dPCA(pca_object=pca, original_shape=original_shape, device=device, dtype=torch_dtype)
+    pca_module = Differentiable4dPCA(pca_object=pca, device=device, dtype=torch_dtype)
 
     # Convert numpy array to torch tensor
     x_tensor = torch.tensor(x_np, dtype=torch_dtype, device=device)

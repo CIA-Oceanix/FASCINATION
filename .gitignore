@@ -33,6 +33,8 @@ Thumbs.db
 *.old
 
 
-outputs/
+outputs/*
+!outputs/AE/AE_CNN_3D/visualisation/
+
 imgs/
 tensorboard/

@@ -134,7 +134,7 @@ if __name__ == "__main__":
         pca = PCA(n_components = n_components, svd_solver = 'auto')
         pca.fit(train_ssp_tens.permute(0,2,3,1).reshape(-1,input_shape[1]))
         
-        dif_pca = DF.Differentiable4dPCA(pca, test_ssp_tens.shape, device, dtype=test_ssp_tens.dtype) #test_ssp_tens.shape
+        dif_pca = DF.Differentiable4dPCA(pca,input_shape,device, dtype=test_ssp_tens.dtype) #test_ssp_tens.shape
 
         pca_reduced_test_ssp_tens = dif_pca.transform(test_ssp_tens) #test_ssp_tens
         pca_unreduced_test_ssp_tens = dif_pca.inverse_transform(pca_reduced_test_ssp_tens)

@@ -153,7 +153,7 @@ if __name__ == "__main__":
         #pca_dict[n_components] = pca
         
         if pca_algo_dif:
-            dif_pca = Differentiable4dPCA(pca, test_ssp_tens.shape, device = test_ssp_tens.device, dtype=test_ssp_tens.dtype)
+            dif_pca = Differentiable4dPCA(pca, batch_shape=test_ssp_tens.shape , device = test_ssp_tens.device, dtype=test_ssp_tens.dtype)
             pca_reduced_test_ssp_tens = dif_pca.transform(test_ssp_tens) 
 
         else:

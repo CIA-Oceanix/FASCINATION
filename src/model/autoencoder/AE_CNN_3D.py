@@ -159,7 +159,6 @@ class AE_CNN_3D_Decoder(nn.Module):
         self.pooling_dim = pooling_dim
         
         layers = []
-
         
         kernel_list = kernel_list[::-1]
         channels_list = channels_list[::-1]
@@ -295,13 +294,10 @@ class AE_CNN_3D(nn.Module):
 
         num_layers = len(channels_list)-1
 
-        if pooling == "None":
-            kernel_list = [7]*num_layers
-        
-        else: 
-            kernel_list = [7,7,5,5,3,3]
-            kernel_list = kernel_list + [3]*(num_layers-len(kernel_list))
-            kernel_list = kernel_list[:num_layers]
+
+        kernel_list = [7,7,5,5,3,3]
+        kernel_list = kernel_list + [3]*(num_layers-len(kernel_list))
+        kernel_list = kernel_list[:num_layers]
 
 
         if pooling_dim == "all":
@@ -312,6 +308,10 @@ class AE_CNN_3D(nn.Module):
 
         elif pooling_dim == "spatial":
             pool_str = (1,2,2)
+
+        elif pooling_dim == "None":
+            pool_str = 1
+            channels_list = [1]*len(channels_list)
 
 
             
@@ -341,7 +341,7 @@ class AE_CNN_3D(nn.Module):
 
 
 
-        if interp_size == 0 or pooling_dim == "spatial":
+        if interp_size == 0 or pooling_dim == "spatial" or pooling_dim == "None":
             self.padding = None
         
         
