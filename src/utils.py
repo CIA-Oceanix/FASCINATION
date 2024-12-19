@@ -11,7 +11,7 @@ from pathlib import Path
 import torch
 import numpy as np
 from omegaconf import DictConfig
-
+import src.differentiable_fonc as DF
 
 
 def load_ssp_da(ssf_da_path):
@@ -42,18 +42,17 @@ def load_model(model_ckpt_path: str,
     cfg = get_cfg_from_ckpt_path(model_ckpt_path, pprint = False)
     
     lit_mod = hydra.utils.call(cfg.model)
-    
+
+    lit_mod = model_setup(lit_mod, dm, device)
+
+
     # torch.serialization.add_safe_globals([DictConfig])
 
-    # checkpoint = torch.load(model_ckpt_path, weights_only=True)
-    # lit_mod.load_state_dict(checkpoint["state_dict"])
-    lit_mod.load_state_dict(torch.load(model_ckpt_path, map_location=device)["state_dict"])
+    checkpoint = torch.load(model_ckpt_path, weights_only=False, map_location=device)
+    lit_mod.load_state_dict(checkpoint["state_dict"])
+    #lit_mod.load_state_dict(torch.load(model_ckpt_path, map_location=device)["state_dict"])
 
     lit_mod.verbose = verbose
-    
-    lit_mod.depth_pre_treatment = dm.depth_pre_treatment
-    lit_mod.norm_stats = dm.norm_stats
-    lit_mod.depth_arr = dm.depth_array
 
     lit_mod = lit_mod.to(device) # Move model to gpu for faster inference
     lit_mod = lit_mod.eval() # Model in eval mode
@@ -61,6 +60,23 @@ def load_model(model_ckpt_path: str,
         param.requires_grad = False  # Ensure no gradients are calculated for this model
 
     return lit_mod
+
+
+def model_setup(lit_model,
+                dm,
+                device = "cpu"):
+    
+    lit_model.depth_pre_treatment = dm.depth_pre_treatment
+    lit_model.norm_stats = dm.norm_stats
+    lit_model.depth_arr = dm.depth_array
+
+    if lit_model.depth_pre_treatment["method"] == "pca":
+        pca = dm.depth_pre_treatment["fitted_pca"]
+        lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=dm.test_shape, device=device, dtype=getattr(torch,dm.dtype_str))     
+    
+    return lit_model
+
+
 
 
 
@@ -160,6 +176,12 @@ def unorm_ssp_arr_3D(ssp_arr:np.array, dm, verbose = False):
     if verbose:
         print(dm.norm_stats.method)
 
+    if dm.depth_pre_treatment["norm_on"] == "components":
+        pca = dm.depth_pre_treatment["fitted_pca"]
+        ssp_shape = ssp_arr.shape
+        ssp_arr = pca.transform(ssp_arr.transpose(0,2,3,1).reshape(-1,ssp_shape[1])).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], pca.n_components).transpose(0,3,1,2)
+
+
     if dm.norm_stats.method == "mean_std_along_depth":
         mean,std = dm.norm_stats.params.values()
         ssp_unorm_arr = (ssp_arr*std) + mean
@@ -173,10 +195,9 @@ def unorm_ssp_arr_3D(ssp_arr:np.array, dm, verbose = False):
         ssp_unorm_arr =ssp_arr*(x_max-x_min) + x_min
     
 
-    if dm.depth_pre_treatment["method"] == "pca":
-        pca = dm.depth_pre_treatment["fitted_pca"]
-        ssp_shape = ssp_arr.shape
-        ssp_unorm_arr = pca.inverse_transform(ssp_unorm_arr.transpose(0,2,3,1).reshape(-1,ssp_shape[1])).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], len(dm.depth_array)).transpose(0,3,1,2)
+    if dm.depth_pre_treatment["norm_on"] == "components":
+
+        ssp_unorm_arr = pca.inverse_transform(ssp_unorm_arr.transpose(0,2,3,1).reshape(-1,pca.n_components)).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], len(dm.depth_array)).transpose(0,3,1,2)
 
         
     return ssp_unorm_arr

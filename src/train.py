@@ -4,7 +4,7 @@ import os
 from torchinfo import summary
 torch.set_float32_matmul_precision('high')
 
-def base_training(trainer, dm, lit_mod, dim, test_dm=None, ckpt=None, pickle_path = None):
+def base_training(trainer, dm, lit_mod, dim = "3D", test_dm=None, ckpt=None, pickle_path = None):
     if trainer.logger is not None:
         print()
         print("Logdir:", trainer.logger.log_dir)
