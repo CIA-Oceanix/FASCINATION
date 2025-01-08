@@ -138,12 +138,12 @@ if __name__ == "__main__":
 
     ae_rmse_dict = {"SSP":{},
                     "ECS":{},
-                    "bottleneck_shape":{}}
+                    "lat_lon_shape":{}}
     
     for n in range(n_layers):
         ae_rmse_dict["SSP"][f"Pool_upsample_{n}_layers"] = {}
         ae_rmse_dict["ECS"][f"Pool_upsample_{n}_layers"] = {}
-        ae_rmse_dict["bottleneck_shape"][f"Pool_upsample_{n}_layers"] = {}
+        ae_rmse_dict["lat_lon_shape"][f"Pool_upsample_{n}_layers"] = {}
     
 
     for n_components in tqdm(range(1,108), unit = "components", desc = "Computing PCA components", disable = not(verbose)):
@@ -165,8 +165,8 @@ if __name__ == "__main__":
 
             pooled_upsampled_test_ssp_tens = model_ae(pca_reduced_test_ssp_tens)
 
-            bottleneck_shape = model_ae.bottleneck.squeeze(1).shape
-            ae_rmse_dict["bottleneck_shape"][f"Pool_upsample_{n_layer}_layers"] = bottleneck_shape
+            lat_lon_shape = model_ae.bottleneck.squeeze(1).shape[-2:]
+            ae_rmse_dict["lat_lon_shape"][f"Pool_upsample_{n_layer}_layers"] = lat_lon_shape
 
             if pca_algo_dif:
                 pca_unreduced_test_ssp_tens = dif_pca.inverse_transform(pooled_upsampled_test_ssp_tens)

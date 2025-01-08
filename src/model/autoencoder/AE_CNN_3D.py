@@ -206,7 +206,7 @@ class AE_CNN_3D_Decoder(nn.Module):
                 
             layers.extend([upsample_layer, act_fn])
                 
-            if i == num_layers:
+            if i == (num_layers-1):
                 layers[-1] = final_act_fn
             
             
@@ -296,6 +296,7 @@ class AE_CNN_3D(nn.Module):
 
 
         kernel_list = [7,7,5,5,3,3]
+        #kernel_list = [3,3,3,3,3,3]
         kernel_list = kernel_list + [3]*(num_layers-len(kernel_list))
         kernel_list = kernel_list[:num_layers]
 
@@ -330,8 +331,8 @@ class AE_CNN_3D(nn.Module):
                        "Relu": nn.ReLU(),
                        "Elu": nn.ELU(),
                        "Gelu": nn.GELU(),
-                       "Linear": nn.Linear(107,107),
                        "None": nn.Identity()}
+        #"Linear": nn.Linear(0,0) impossible d'allouer la mémoire sufisante pour un e fonction lineaire (n_feature*depth*height*width)**2
         
         
         self.model_dtype = getattr(torch, dtype_str)
@@ -341,7 +342,7 @@ class AE_CNN_3D(nn.Module):
 
 
 
-        if interp_size == 0 or pooling_dim == "spatial" or pooling_dim == "None":
+        if interp_size == 0: # or pooling_dim == "spatial" or pooling_dim == "None":
             self.padding = None
         
         

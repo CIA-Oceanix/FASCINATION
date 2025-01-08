@@ -18,15 +18,15 @@ normalization:
 
 
 
-dtype: float64 #float16 #float64 
+dtype: float32 #float16 #float64 
 
 root_save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs #/DATASET/envs/o23gauvr/outputs #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs
 
-save_dir_name: test/repair_ae #channels_${model.model_hparams.channels_list}
+save_dir_name: test #channels_${model.model_hparams.channels_list}
 
 model_architecture: AE_CNN
 
-pooled_dim: spatial #spatial #depth  #all #None 
+pooled_dim: None #spatial #depth  #all #None 
 
 patience: 5
 
@@ -44,7 +44,7 @@ trainer:
     version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.min_max_position_weight}_inflection_value_${model.loss_weight.min_max_value_weight}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}_norm_on_${datamodule.depth_pre_treatment.norm_on}_train_on_${datamodule.depth_pre_treatment.train_on}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/n_profiles_${datamodule.n_profiles}/${now:%Y-%m-%d_%H-%M}
     log_graph : True
 
-  max_epochs: 1
+  max_epochs: 3
 
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
@@ -72,7 +72,7 @@ datamodule:
     batch_size: 4
     num_workers: 2
   norm_stats:
-    method:  mean_std_along_depth #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
+    method:  mean_std #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
     params: ${normalization.${datamodule.norm_stats.method}}
   manage_nan: suppress
   n_profiles: null #100000
@@ -99,18 +99,18 @@ model:
   opt_fn:
     _target_: src.utils.cosanneal_lr_adamw
     _partial_: true
-    lr: 1e-3
+    lr: 1e-4
     T_max: ${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
     weight_decay: 1e-3 #0 #1e-3
   loss_weight:
     prediction_weight: 1 #10 #0.5 #0.01 #1
     weighted_weight: 0 #100 
-    gradient_weight: 0 #1000000
+    gradient_weight: 100 #1000000
     max_position_weight: 0 #0.01 
     max_value_weight: 0 #100 
     min_max_position_weight: 0 #0.01 
     min_max_value_weight: 0 #100 
-    fft_weight: 0 #0.01 
+    fft_weight: 0 #0.01
     ecs_weight: 0
   
 
@@ -120,16 +120,16 @@ model_config:
 
   model_hparams:
     AE_CNN_3D: &AE_CNN_Default
-      channels_list: [1,1,1,1] #[1,1,1,1] #[1,8,8,8] #[1,16,32,128,256,512] #[1,1] #[1,16,32,128,256,512]s
+      channels_list: [1,1] #[1,1,1,1] #[1,8,8,8] #[1,16,32,128,256,512] #[1,1] #[1,16,32,128,256,512]s
       n_conv_per_layer: 1
       padding: reflect
-      interp_size: 5
-      act_fn_str: None #Elu #Elu
-      final_act_fn_str: None #Linear #Linear #Linear
+      interp_size: 10
+      act_fn_str: Relu #Elu #Elu
+      final_act_fn_str: Tanh #Linear #Linear #Linear
       final_upsample_str: upsample #upsample_pooling #upsample  #upsample_pooling
       upsample_mode: trilinear
       pooling: Max #Avg
-      pooling_dim: ${pooled_dim} #spatial #depth  #all
+      pooling_dim: ${pooled_dim} #spatial #depth  #all #None
       linear_layer: False
       latent_size: 50
       dropout_proba: 0
@@ -172,7 +172,7 @@ hydra:
     dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 2
+      CUDA_VISIBLE_DEVICES: 5
 
 # torch:
 #   backends:n

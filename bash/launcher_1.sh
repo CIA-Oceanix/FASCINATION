@@ -2,7 +2,7 @@
 
 
 declare -a channels_list=([1,8,8,8]) #  #[1,8] 
-declare -a loss_weights_list=("10,100,1000000,0.01,100,0.01,100,0.1")
+declare -a loss_weights_list=("1,0,0,0,0,0,0,0")
 
 
 declare -a pooling_dim="all"

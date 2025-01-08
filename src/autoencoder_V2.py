@@ -115,21 +115,26 @@ class AutoEncoder(pl.LightningModule):
 
     def on_train_start(self):
         batch = next(iter(self.trainer.datamodule.train_dataloader())).to(self.device)
-        check_differentiable(batch,self,verbose=False,raise_error=True)
-
+        check_differentiable(batch, self, verbose=False, raise_error=True)
         # with torch.no_grad():
+        #     # Initialize encoder weights and bias for identity function
         #     conv_weights = self.encoder.net[0].weight
         #     conv_weights.fill_(0)
-        #     conv_weights[:,:, :, 3, 3] = 1  
+        #     conv_weights[:, :, 3, 3, 3] = 1  # Assuming kernel size is 7x7x7
 
-        #     self.encoder.net[0].bias[:] = 0
+        #     self.encoder.net[0].bias.fill_(0)
 
+        #     # Initialize decoder weights and bias for identity function
         #     conv_weights = self.decoder.net[0].weight
         #     conv_weights.fill_(0)
-        #     conv_weights[:,:, 0, 3, 3] = 1  
+        #     conv_weights[:, :, 3, 3, 3] = 1  # Assuming kernel size is 7x7x7
 
-        #     self.decoder.net[0].bias[:] = 0
+        #     self.decoder.net[0].bias.fill_(0)
 
+    def on_test_start(self):
+        pass
+
+            
 
     def training_step(self, batch, batch_idx):
 
@@ -140,7 +145,6 @@ class AutoEncoder(pl.LightningModule):
         return self.step(batch,'val')
     
     def test_step(self, batch):
-
         return self.step(batch,'test')
     
 
@@ -173,7 +177,7 @@ class AutoEncoder(pl.LightningModule):
         + self.loss_weight['max_value_weight'] * max_value_loss
 
         if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
-            
+
             pass
 
         else:
@@ -204,12 +208,12 @@ class AutoEncoder(pl.LightningModule):
             unorm_ssp_truth = self.unorm(self.ssp_truth)
 
             ssp_rmse = torch.sqrt(torch.mean((unorm_ssp_reconstructed-unorm_ssp_truth)**2))            
-            self.log("SSP RMSE", ssp_rmse, on_epoch = True)
+            self.log("SSP RMSE", ssp_rmse, on_epoch = True, reduce_fx = torch.mean)
 
             truth_max_pos = torch.argmax(unorm_ssp_truth, dim=1).detach().cpu().numpy()
             reconstructed_max_pos = torch.argmax(unorm_ssp_reconstructed, dim=1).detach().cpu().numpy()
             ecs_rmse = np.sqrt(np.mean((self.depth_arr[truth_max_pos]-self.depth_arr[reconstructed_max_pos])**2))
-            self.log("ECS RMSE", ecs_rmse, on_epoch = True)
+            self.log("ECS RMSE", ecs_rmse, on_epoch = True, reduce_fx = torch.mean)
 
 
         self.log(f"{phase}_loss", full_loss, prog_bar=False, on_step=None, on_epoch=True)
@@ -227,9 +231,6 @@ class AutoEncoder(pl.LightningModule):
         
     
 
-
-
-    
     def initiate_model(self,model_name, model_hparams):
         if model_name in self.model_dict:
             return self.model_dict[model_name](**model_hparams)
