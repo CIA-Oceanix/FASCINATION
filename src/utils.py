@@ -12,6 +12,7 @@ import torch
 import numpy as np
 from omegaconf import DictConfig
 import src.differentiable_fonc as DF
+import src.activation_function as AF
 
 
 def load_ssp_da(ssf_da_path):
@@ -49,7 +50,7 @@ def load_model(model_ckpt_path: str,
     # torch.serialization.add_safe_globals([DictConfig])
 
     checkpoint = torch.load(model_ckpt_path, weights_only=False, map_location=device)
-    lit_mod.load_state_dict(checkpoint["state_dict"])
+    lit_mod.load_state_dict(checkpoint["state_dict"],strict=False)
     #lit_mod.load_state_dict(torch.load(model_ckpt_path, map_location=device)["state_dict"])
 
     lit_mod.verbose = verbose
@@ -65,10 +66,14 @@ def load_model(model_ckpt_path: str,
 def model_setup(lit_model,
                 dm,
                 device = "cpu"):
-    
     lit_model.depth_pre_treatment = dm.depth_pre_treatment
     lit_model.norm_stats = dm.norm_stats
     lit_model.depth_arr = dm.depth_array
+
+    lit_model.model_hparams['input_shape'] = dm.test_data_da.shape
+    lit_model.model_hparams['device'] = lit_model.device 
+    lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams)
+    lit_model = set_last_activation_fucntion(lit_model, dm)
 
     if lit_model.depth_pre_treatment["method"] == "pca":
         pca = dm.depth_pre_treatment["fitted_pca"]
@@ -77,6 +82,19 @@ def model_setup(lit_model,
     return lit_model
 
 
+def set_last_activation_fucntion(lit_model, dm):
+
+    if lit_model.norm_stats["method"] == "min_max":
+        lit_model.model_AE.decoder.net[-1] = torch.Sigmoid()
+    
+    elif lit_model.norm_stats["method"] == "mean_std" or lit_model.norm_stats["method"] == "mean_std_along_depth":
+
+
+        scale = max(abs(dm.min_val), abs(dm.max_val))
+        scale = scale + 0.1*scale
+        lit_model.model_AE.decoder.net[-1] = AF.ScaledTanh(scale)  ##See with nn.Identity()
+    
+    return lit_model
 
 
 

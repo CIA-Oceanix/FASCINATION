@@ -26,7 +26,7 @@ save_dir_name: test #channels_${model.model_hparams.channels_list}
 
 model_architecture: AE_CNN
 
-pooled_dim: None #spatial #depth  #all #None 
+pooled_dim: all #spatial #depth  #all #None 
 
 patience: 5
 
@@ -44,7 +44,7 @@ trainer:
     version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.min_max_position_weight}_inflection_value_${model.loss_weight.min_max_value_weight}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}_norm_on_${datamodule.depth_pre_treatment.norm_on}_train_on_${datamodule.depth_pre_treatment.train_on}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/n_profiles_${datamodule.n_profiles}/${now:%Y-%m-%d_%H-%M}
     log_graph : True
 
-  max_epochs: 3
+  max_epochs: 5
 
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
@@ -94,18 +94,18 @@ datamodule:
 
 model:
   _target_: src.autoencoder_V2.AutoEncoder
-  model_name: ${model_architecture}_3D
+  model_name: ${model_architecture} #_3D
   model_hparams: ${model_config.model_hparams.${model.model_name}}
   opt_fn:
     _target_: src.utils.cosanneal_lr_adamw
     _partial_: true
-    lr: 1e-4
+    lr: 1e-3
     T_max: ${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
     weight_decay: 1e-3 #0 #1e-3
   loss_weight:
     prediction_weight: 1 #10 #0.5 #0.01 #1
     weighted_weight: 0 #100 
-    gradient_weight: 100 #1000000
+    gradient_weight: 0 #1000000
     max_position_weight: 0 #0.01 
     max_value_weight: 0 #100 
     min_max_position_weight: 0 #0.01 
@@ -119,43 +119,43 @@ model_config:
 
 
   model_hparams:
-    AE_CNN_3D: &AE_CNN_Default
-      channels_list: [1,1] #[1,1,1,1] #[1,8,8,8] #[1,16,32,128,256,512] #[1,1] #[1,16,32,128,256,512]s
-      n_conv_per_layer: 1
-      padding: reflect
-      interp_size: 10
-      act_fn_str: Relu #Elu #Elu
-      final_act_fn_str: Tanh #Linear #Linear #Linear
-      final_upsample_str: upsample #upsample_pooling #upsample  #upsample_pooling
-      upsample_mode: trilinear
-      pooling: Max #Avg
+    # AE_CNN_3D: &AE_CNN_Default
+    #   channels_list: [1,8,8,8] #[1,1,1,1] #[1,8,8,8] #[1,16,32,128,256,512] #[1,1] #[1,16,32,128,256,512]s
+    #   n_conv_per_layer: 1
+    #   padding: reflect
+    #   interp_size: 0
+    #   act_fn_str: Relu #Elu #Elu
+    #   final_act_fn_str: Tanh #Linear #Linear #Linear
+    #   final_upsample_str: upsample #upsample_pooling #upsample  #upsample_pooling
+    #   upsample_mode: trilinear
+    #   pooling: Max #Avg
+    #   pooling_dim: ${pooled_dim} #spatial #depth  #all #None
+    #   linear_layer: False
+    #   latent_size: 50
+    #   dropout_proba: 0
+    #   dtype_str: ${dtype}
+
+    AE_CNN:
+      channels_list: [1, 2, 4, 8]
+      kernel_list: 3
+      n_conv_per_layer: 2
+      padding: 
+        mode: cubic #"reflect" #linear #cubic
+        interp_size: 0
+      act_fn_str: "Relu"
+      final_upsample_str: "upsample" #upsample #upsample_pooling
+      upsample_mode: "trilinear" #nearest
+      pooling: "conv" #conv #Max #Avg
       pooling_dim: ${pooled_dim} #spatial #depth  #all #None
-      linear_layer: False
-      latent_size: 50
+      linear_layer: 
+        use: True
+        cr: 10000
       dropout_proba: 0
       dtype_str: ${dtype}
 
 
-
-    AE_CNN_2D:
-      <<: *AE_CNN_Default
-
-    AE_CNN_1D:
-      <<: *AE_CNN_Default
-      latent_size: 9
-
-      padding: linear
-
-
-
   save_dir:
-    #AE_CNN_3D: latent_dim_${model.model_hparams.latent_dim}_num_layers_${model.model_hparams.num_layers}_linear_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
-    #AE_CNN_2D: latent_dim_${model.model_hparams.latent_dim}_num_layers_${model.model_hparams.num_layers}_linear_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
-    AE_CNN: pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_later_${model.model_hparams.linear_layer}_lattent_size_${model.model_hparams.latent_size}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding}/interp_size_${model.model_hparams.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}_final_act_fn_${model.model_hparams.final_act_fn_str}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
-  
-
-    AE_CNN_pool_2D: latent_dim_${model.model_hparams.latent_dim}_pooling_${model.model_hparams.num_layers}_${model.model_hparams.pooling_str}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}/act_fn_${model.model_hparams.act_fn_str}_final_act_fn_${model.model_hparams.final_act_fn_str}_normalization_${datamodule.norm_stats.method}
-    AE_CNN_pool_1D: latent_dim_${model.model_hparams.latent_dim}_pooling_${model.model_hparams.num_layers}_${model.model_hparams.pooling_str}_dropout_${model.model_hparams.dropout_proba}_patience_${patience}
+    AE_CNN: pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_layer_${model.model_hparams.linear_layer.use}/cr_{model.model_hparams.linear_layer.cr}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding.mode}/interp_size_${model.model_hparams.padding.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
 
 
 entrypoints:
@@ -167,12 +167,13 @@ entrypoints:
     dm: ${datamodule}
 
 
+
 hydra:
   run:
     dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
   job:
     env_set: 
-      CUDA_VISIBLE_DEVICES: 5
+      CUDA_VISIBLE_DEVICES: 0
 
 # torch:
 #   backends:n

@@ -4,22 +4,14 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        
-        
         {
-            "name": "Python Debugger: Current File",
+            "name": "Python: Current File",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "console": "integratedTerminal",
-            "pythonPath": "/Odyssey/private/o23gauvr/miniconda3/envs/fsc_env/bin/python",
-            "exclude": ["**/*.ipynb",
-                        "**/*.ipynb.py",
-                        "/dev",
-                        "outputs",
-                        "*.sh"
-
-        ] 
+            "env": {
+                "PYTHONPATH": "/Odyssey/private/o23gauvr/miniconda3/envs/fsc_env/bin/python"
+            }
         }
     ]
 }
