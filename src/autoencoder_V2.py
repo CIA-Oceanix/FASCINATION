@@ -13,7 +13,6 @@ from src.model.autoencoder.AE_CNN import AE_CNN
 #from src.model.autoencoder.AE_CNN_pool_2D import AE_CNN_pool_2D
 #from src.model.autoencoder.AE_CNN_1D import AE_CNN_1D
 from src.utils import check_differentiable, check_abnormal_grad
-from torch.utils.tensorboard import SummaryWriter
 
 
 import src.differentiable_fonc as DF
@@ -172,7 +171,7 @@ class AutoEncoder(pl.LightningModule):
         self.eval()
         return self.step(batch,'val')
     
-    def test_step(self, batch):
+    def test_step(self, batch, batch_idx):
         self.eval()
         return self.step(batch,'test')
     
@@ -280,6 +279,9 @@ class AutoEncoder(pl.LightningModule):
             scale = scale + 0.1*scale
             self.model_AE.decoder.net[-1] = ScaledTanh(scale) #nn.Identity() #ScaledTanh(scale)  ##See with nn.Identity()
 
+        if self.model_AE.use_final_act_fn == False:
+            self.model_AE.decoder.net[-1] = nn.Identity()
+
          
 
 
@@ -310,43 +312,43 @@ class AutoEncoder(pl.LightningModule):
     
 
     
-def test_non_deterministic(func, input_tensor, num_tests=10):
-    # Set random seeds for reproducibility
-    torch.manual_seed(42)
-    np.random.seed(42)
+# def test_non_deterministic(func, input_tensor, num_tests=10):
+#     # Set random seeds for reproducibility
+#     torch.manual_seed(42)
+#     np.random.seed(42)
 
-    # Run the function multiple times and store the outputs
-    outputs = []
-    for _ in range(num_tests):
-        output = func(input_tensor)
-        outputs.append(output)
+#     # Run the function multiple times and store the outputs
+#     outputs = []
+#     for _ in range(num_tests):
+#         output = func(input_tensor)
+#         outputs.append(output)
 
-    # Compare the outputs
-    for i in range(1, num_tests):
-        if not torch.equal(outputs[0], outputs[i]):
-            print("The function is non-deterministic.")
-            return
+#     # Compare the outputs
+#     for i in range(1, num_tests):
+#         if not torch.equal(outputs[0], outputs[i]):
+#             print("The function is non-deterministic.")
+#             return
 
-    print("The function is deterministic.")
+#     print("The function is deterministic.")
 
 
 
-def list_model_functions(model):
-    print("Modules (Layers) in the model:")
-    list_modules = []
-    for name, module in model.named_modules():
-        #print(f"{name}: {module}")
-        list_modules.append((name,module))
+# def list_model_functions(model):
+#     print("Modules (Layers) in the model:")
+#     list_modules = []
+#     for name, module in model.named_modules():
+#         #print(f"{name}: {module}")
+#         list_modules.append((name,module))
     
-    return list_modules
+#     return list_modules
 
-    print("\nParameters in the model:")
-    for name, param in model.named_parameters():
-        print(f"{name}: {param.shape}")
+#     print("\nParameters in the model:")
+#     for name, param in model.named_parameters():
+#         print(f"{name}: {param.shape}")
 
-def check_model_deterministic(model, input_tensor):
+# def check_model_deterministic(model, input_tensor):
 
-    list_modules = list_model_functions(model)
-    for name, module in list_modules:
-        test_non_deterministic(module, input_tensor)
+#     list_modules = list_model_functions(model)
+#     for name, module in list_modules:
+#         test_non_deterministic(module, input_tensor)
 

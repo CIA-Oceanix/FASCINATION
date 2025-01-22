@@ -14,6 +14,13 @@ from omegaconf import DictConfig
 import src.differentiable_fonc as DF
 import src.activation_function as AF
 
+import os 
+import sys
+
+running_path = "/Odyssey/private/o23gauvr/code/FASCINATION/"
+os.chdir(running_path)
+sys.path.insert(0,running_path)
+
 
 def load_ssp_da(ssf_da_path):
     
@@ -39,6 +46,11 @@ def load_model(model_ckpt_path: str,
                dm,
                device: str, 
                verbose: bool = True):
+    
+    #sys.path.append('/Odyssey/private/o23gauvr/code/FASCINATION/src')
+
+    if "/homes/o23gauvr/Documents/thèse/code/FASCINATION/" in sys.path:
+        sys.path.remove("/homes/o23gauvr/Documents/thèse/code/FASCINATION/")
 
     cfg = get_cfg_from_ckpt_path(model_ckpt_path, pprint = False)
     

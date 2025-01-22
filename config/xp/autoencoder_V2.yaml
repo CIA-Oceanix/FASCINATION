@@ -20,13 +20,13 @@ normalization:
 
 dtype: float32 #float16 #float64 
 
-root_save_dir: /homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs #/DATASET/envs/o23gauvr/outputs #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs
+root_save_dir: /Odyssey/private/o23gauvr/code/FASCINATION/outputs #/DATASET/envs/o23gauvr/outputs #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs
 
 save_dir_name: test #channels_${model.model_hparams.channels_list}
 
 model_architecture: AE_CNN
 
-pooled_dim: all #spatial #depth  #all #None 
+pooled_dim: depth #spatial #depth  #all #None 
 
 patience: 5
 
@@ -39,12 +39,12 @@ trainer:
   accumulate_grad_batches: 1
   logger: 
     _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
-    save_dir: ${root_save_dir}/AE/${model.model_name}  #/DATASET/envs/o23gauvr/outputs/AE_V2/ #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/
-    name: ${save_dir_name}     #ecs_${model.loss_weight.ecs_weight}
+    save_dir: ${root_save_dir}/${save_dir_name}/AE/  #/DATASET/envs/o23gauvr/outputs/AE_V2/ #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/
+    name: ${model.model_name}    #ecs_${model.loss_weight.ecs_weight}
     version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.min_max_position_weight}_inflection_value_${model.loss_weight.min_max_value_weight}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}_norm_on_${datamodule.depth_pre_treatment.norm_on}_train_on_${datamodule.depth_pre_treatment.train_on}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/n_profiles_${datamodule.n_profiles}/${now:%Y-%m-%d_%H-%M}
     log_graph : True
 
-  max_epochs: 5
+  max_epochs: 100
 
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
@@ -99,17 +99,17 @@ model:
   opt_fn:
     _target_: src.utils.cosanneal_lr_adamw
     _partial_: true
-    lr: 1e-3
+    lr: 1e-4
     T_max: ${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
     weight_decay: 1e-3 #0 #1e-3
   loss_weight:
     prediction_weight: 1 #10 #0.5 #0.01 #1
     weighted_weight: 0 #100 
-    gradient_weight: 0 #1000000
+    gradient_weight: 1000 #1000000
     max_position_weight: 0 #0.01 
     max_value_weight: 0 #100 
-    min_max_position_weight: 0 #0.01 
-    min_max_value_weight: 0 #100 
+    min_max_position_weight: 1000 #0.01 
+    min_max_value_weight: 1000 #100 
     fft_weight: 0 #0.01
     ecs_weight: 0
   
@@ -138,24 +138,25 @@ model_config:
     AE_CNN:
       channels_list: [1, 2, 4, 8]
       kernel_list: 3
-      n_conv_per_layer: 2
+      n_conv_per_layer: 1
       padding: 
         mode: cubic #"reflect" #linear #cubic
         interp_size: 0
       act_fn_str: "Relu"
+      use_final_act_fn: True
       final_upsample_str: "upsample" #upsample #upsample_pooling
       upsample_mode: "trilinear" #nearest
       pooling: "conv" #conv #Max #Avg
       pooling_dim: ${pooled_dim} #spatial #depth  #all #None
       linear_layer: 
-        use: True
-        cr: 10000
+        use: False
+        cr: 100000
       dropout_proba: 0
       dtype_str: ${dtype}
 
 
   save_dir:
-    AE_CNN: pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_layer_${model.model_hparams.linear_layer.use}/cr_{model.model_hparams.linear_layer.cr}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding.mode}/interp_size_${model.model_hparams.padding.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
+    AE_CNN: pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_layer_${model.model_hparams.linear_layer.use}/cr_${model.model_hparams.linear_layer.cr}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding.mode}/interp_size_${model.model_hparams.padding.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}/use_final_act_fn_${model.model_hparams.use_final_act_fn}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
 
 
 entrypoints:
@@ -170,10 +171,13 @@ entrypoints:
 
 hydra:
   run:
-    dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version}
+    dir: ${trainer.logger.save_dir}/${trainer.logger.name}/${trainer.logger.version} #/Odyssey/private/o23gauvr/code/FASCINATION 
+
   job:
     env_set: 
       CUDA_VISIBLE_DEVICES: 0
+      
+      #TORCH_USE_CUDA_DSA: 1
 
 # torch:
 #   backends:n

@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from typing import Union
 
 class AE_CNN(nn.Module):
     """
@@ -25,10 +26,11 @@ class AE_CNN(nn.Module):
     def __init__(self,
                  input_shape: tuple = (4, 107, 240, 240),
                  channels_list: list = [1, 1, 1, 1],
-                 kernel_list: int | list = 3,
+                 kernel_list: Union[int, list] = 3,
                  n_conv_per_layer: int = 1,
                  padding: dict = {"mode": "reflect", "interp_size": 20},
                  act_fn_str: str = "Relu",
+                 use_final_act_fn: bool = True,
                  final_upsample_str: str = "upsample",
                  upsample_mode: str = "trilinear",
                  pooling: bool = "Max",
@@ -41,9 +43,11 @@ class AE_CNN(nn.Module):
 
         self.input_shape = input_shape
         self.channels_list = channels_list
+        self.kernel_list = kernel_list
         self.n_conv_per_layer = n_conv_per_layer
         self.padding = padding
         self.act_fn_str = act_fn_str
+        self.use_final_act_fn = use_final_act_fn
         self.final_upsample_str = final_upsample_str
         self.upsample_mode = upsample_mode
         self.pooling = pooling
@@ -59,10 +63,10 @@ class AE_CNN(nn.Module):
         self.bottleneck_shape = []
 
 
-        if isinstance(kernel_list, int):
-            self.kernel_list = [kernel_list] * len(channels_list)
-        elif len(kernel_list) < len(channels_list):
-            self.kernel_list = self.kernel_list + [kernel_list[-1]] * (len(channels_list) - len(kernel_list))
+        if isinstance(self.kernel_list, int):
+            self.kernel_list = [self.kernel_list] * len(channels_list)
+        elif len(self.kernel_list) < len(channels_list):
+            self.kernel_list = self.kernel_list + [self.kernel_list[-1]] * (len(channels_list) - len(self.kernel_list))
 
         if pooling_dim == "all":
             self.pool_str = (2,2,2)
@@ -358,24 +362,30 @@ class AE_CNN_Decoder(nn.Module):
                 parent.upsample_layer.padding = pad
 
             if parent.pooling == "conv":
-                output_pad = pad
+                output_pad = 1
 
             conv_transpose_layer = nn.ConvTranspose3d(in_channels=channels_list[i], out_channels=channels_list[i + 1], kernel_size=ker, stride=conv_stride, padding=pad, output_padding=output_pad, dtype=parent.model_dtype)
             layers.append(conv_transpose_layer)
             layers.extend([parent.upsample_layer, parent.act_fn])
 
+            if i == len(channels_list)-2:
+                if parent.final_upsample_str == "upsample_pooling":
+                    layers[-2:-1] = (parent.upsample_layer, nn.AdaptiveMaxPool3d(output_size = parent.input_shape[1:]))
+            
+                elif parent.final_upsample_str == "upsample":
+                    layers[-2] = nn.Upsample(size = parent.input_shape[1:], mode = parent.upsample_mode)
+
+
             if parent.n_conv_per_layer > 1:
                 conv_layer = nn.Conv3d(in_channels=channels_list[i + 1], out_channels=channels_list[i + 1], kernel_size=ker, stride=1, padding=pad, dtype=parent.model_dtype)
                 layers.extend([conv_layer, parent.act_fn] * (parent.n_conv_per_layer - 1))
+        
+        
+
 
 
         self.net = nn.Sequential(*layers)
-        self.linear_layer = parent.linear_layer
-        self.pooling_dim = parent.pooling_dim
-        self.final_upsample_str = parent.final_upsample_str
-        self.upsample_mode = parent.upsample_mode
-        self.x_hat_spatial_shape = parent.input_shape[1:]
-        self.z_spatial_shape = parent.z_pre_linear_shape
+
 
     def forward(self, z):
         """
@@ -388,12 +398,6 @@ class AE_CNN_Decoder(nn.Module):
         Returns:
             torch.Tensor: Reconstructed tensor.
         """
-        if self.final_upsample_str == "upsample_pooling":
-            self.net[-2] = nn.Sequential(self.upsample_layer,
-                                         nn.AdaptiveMaxPool3d(output_size = self.x_hat_spatial_shape))
-            
-        elif self.final_upsample_str == "upsample":
-            self.net[-2] = nn.Upsample(size = self.x_hat_spatial_shape, mode = self.upsample_mode)
 
 
         return self.net(z)

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from typing import Union
 
 
 class AE_CNN_3D_Encoder(nn.Module):
@@ -13,7 +13,7 @@ class AE_CNN_3D_Encoder(nn.Module):
                  channels_list: list,
                  kernel_list: list,
                  n_conv_per_layer: int,
-                 padding: int | str, 
+                 padding: Union[int, str], 
                  act_fn: object,
                  pooling_layer: torch.nn,
                  pooling_dim: str,
@@ -132,7 +132,7 @@ class AE_CNN_3D_Decoder(nn.Module):
                  channels_list: list,
                  kernel_list: list,
                  n_conv_per_layer: int,
-                 padding: int | str, 
+                 padding: Union[int, str], 
                  pooling_dim: str,
                  linear_layer: bool,
                  latent_size: int,
@@ -274,7 +274,7 @@ class AE_CNN_3D(nn.Module):
     def __init__(self,
                  channels_list: list = [1,1,1,1],
                  n_conv_per_layer: int = 1,
-                 padding: int | str = "same",
+                 padding: Union[int, str] = "same",
                  interp_size: int = 20,
                  act_fn_str : str = "Relu",
                  final_act_fn_str: str = "linear",

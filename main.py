@@ -1,6 +1,5 @@
 import hydra
 
-
 @hydra.main(config_path='config', config_name='main', version_base='1.2')
 def main(cfg):
     
