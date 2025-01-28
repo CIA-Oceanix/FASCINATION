@@ -1,0 +1,122 @@
+paths:
+  sound: /Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+normalization:
+  min_max:
+    x_min: null
+    x_max: null
+  mean_std:
+    mean: null
+    std: null
+  mean_std_along_depth:
+    mean: null
+    std: null
+dtype: float32
+root_save_dir: /Odyssey/private/o23gauvr/code/FASCINATION/outputs
+save_dir_name: test
+model_architecture: AE_CNN
+pooled_dim: all
+patience: 5
+trainer:
+  _target_: pytorch_lightning.Trainer
+  inference_mode: false
+  accelerator: gpu
+  devices: 1
+  check_val_every_n_epoch: 1
+  accumulate_grad_batches: 1
+  logger:
+    _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
+    save_dir: ${root_save_dir}/${save_dir_name}/AE/
+    name: ${model.model_name}
+    version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.min_max_position_weight}_inflection_value_${model.loss_weight.min_max_value_weight}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}_norm_on_${datamodule.depth_pre_treatment.norm_on}_train_on_${datamodule.depth_pre_treatment.train_on}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/n_profiles_${datamodule.n_profiles}/${now:%Y-%m-%d_%H-%M}
+    log_graph: true
+  max_epochs: 5
+  callbacks:
+  - _target_: pytorch_lightning.callbacks.LearningRateMonitor
+  - _target_: pytorch_lightning.callbacks.ModelCheckpoint
+    monitor: val_loss
+    save_top_k: 1
+    filename: '{val_loss:.2f}-{epoch:02d}'
+    mode: min
+  - _target_: pytorch_lightning.callbacks.EarlyStopping
+    monitor: val_loss
+    verbose: true
+    patience: ${trainer.max_epochs}
+    min_delta: 1.0e-06
+datamodule:
+  _target_: src.autoencoder_datamodule.AutoEncoderDatamodule_3D
+  input_da:
+    _target_: src.utils.load_ssp_da
+    ssf_da_path: ${paths.sound}
+  dl_kw:
+    batch_size: 4
+    num_workers: 2
+  norm_stats:
+    method: mean_std
+    params: ${normalization.${datamodule.norm_stats.method}}
+  manage_nan: suppress
+  n_profiles: null
+  pooled_dim: ${pooled_dim}
+  depth_pre_treatment:
+    method: pca
+    params: 10
+    norm_on: components
+    train_on: components
+  dtype_str: ${dtype}
+model:
+  _target_: src.autoencoder_V2.AutoEncoder
+  model_name: ${model_architecture}
+  model_hparams: ${model_config.model_hparams.${model.model_name}}
+  opt_fn:
+    _target_: src.utils.cosanneal_lr_adamw
+    _partial_: true
+    lr: 0.001
+    T_max: ${trainer.max_epochs}
+    weight_decay: 0.001
+  loss_weight:
+    prediction_weight: 1
+    weighted_weight: 0
+    gradient_weight: 1000
+    max_position_weight: 0
+    max_value_weight: 0
+    min_max_position_weight: 0
+    min_max_value_weight: 0
+    fft_weight: 0
+    ecs_weight: 0
+model_config:
+  model_hparams:
+    AE_CNN:
+      channels_list:
+      - 1
+      - 2
+      - 4
+      - 8
+      kernel_list:
+      - 7
+      - 5
+      - 3
+      - 3
+      - 3
+      n_conv_per_layer: 1
+      padding:
+        mode: cubic
+        interp_size: 0
+      act_fn_str: Relu
+      use_final_act_fn: true
+      final_upsample_str: upsample
+      upsample_mode: trilinear
+      pooling: Avg
+      pooling_dim: ${pooled_dim}
+      linear_layer:
+        use: false
+        cr: 100000
+      dropout_proba: 0
+      dtype_str: ${dtype}
+  save_dir:
+    AE_CNN: pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_layer_${model.model_hparams.linear_layer.use}/cr_${model.model_hparams.linear_layer.cr}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding.mode}/interp_size_${model.model_hparams.padding.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}/use_final_act_fn_${model.model_hparams.use_final_act_fn}
+entrypoints:
+- _target_: pytorch_lightning.seed_everything
+  seed: 333
+- _target_: src.train.base_training
+  trainer: ${trainer}
+  lit_mod: ${model}
+  dm: ${datamodule}

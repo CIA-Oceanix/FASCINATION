@@ -13,12 +13,9 @@ def base_training(trainer, dm, lit_mod, dim = "3D", test_dm=None, ckpt=None, pic
     
     os.makedirs(trainer.logger.log_dir, exist_ok=True)
     
-    summary_input_size = {"1D": [dm.dl_kw['batch_size'],107],
-                          "2D": [dm.dl_kw['batch_size'],107,240,240],
-                          "3D": [dm.dl_kw['batch_size'],107,240,240]}
     
     model_summary = summary(lit_mod,
-                            input_size = summary_input_size[dim], 
+                            input_size = lit_mod.model_AE.input_shape, 
                             device = lit_mod.device.type, 
                             batch_dim = None, 
                             dtypes=[lit_mod.model_dtype],

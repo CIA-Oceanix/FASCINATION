@@ -101,6 +101,9 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
 
             self.input.data = data
 
+            self.min_val = self.input.data.min()
+            self.max_val = self.input.data.max()
+
             # if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
             #     coords = self.input.coords
             #     data = pca.transform(data.transpose(0, 2, 3, 1).reshape(-1, input_shape[1])).reshape(input_shape[0], input_shape[2], input_shape[3], n_components).transpose(0, 3, 1, 2)
@@ -154,6 +157,7 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
             print("Norm stats", self.norm_stats)
 
         return self.norm_stats
+    
 
 class AE_BaseDataset_3D(torch.utils.data.Dataset):
     def __init__(self, ipt):

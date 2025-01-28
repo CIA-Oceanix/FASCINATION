@@ -8,14 +8,17 @@ import torch.nn.functional as F
 #from src.explicit_ecs import ECS_explicit_pred_1D, ECS_explicit_pred_3D
 #from src.model.autoencoder.AE_CNN_2D import AE_CNN_2D
 from src.model.autoencoder.AE_CNN_3D import AE_CNN_3D
+from src.model.autoencoder.AE_CNN import AE_CNN
+
 #from src.model.autoencoder.AE_CNN_pool_2D import AE_CNN_pool_2D
 #from src.model.autoencoder.AE_CNN_1D import AE_CNN_1D
 from src.utils import check_differentiable, check_abnormal_grad
-from torch.utils.tensorboard import SummaryWriter
 
 
 import src.differentiable_fonc as DF
 from src.loss.loss_func import *
+from src.activation_function import ScaledTanh
+
 
 class AutoEncoder(pl.LightningModule):
     def __init__(self,
@@ -27,18 +30,22 @@ class AutoEncoder(pl.LightningModule):
     
         super().__init__()
         
-        self.model_dict = dict( AE_CNN_3D = AE_CNN_3D) #AE_CNN_2D = AE_CNN_2D, AE_CNN_pool_2D  = AE_CNN_pool_2D, AE_CNN_1D = AE_CNN_1D #Dense_CNN_with_classif_3D = Dense_CNN_with_classif_3D
+        self.model_dict = dict(AE_CNN = AE_CNN, AE_CNN_3D = AE_CNN_3D) #AE_CNN_2D = AE_CNN_2D, AE_CNN_pool_2D  = AE_CNN_pool_2D, AE_CNN_1D = AE_CNN_1D #Dense_CNN_with_classif_3D = Dense_CNN_with_classif_3D
         self.verbose = False
 
         self.loss_weight = loss_weight
         self.opt_fn = opt_fn
+        self.model_name = model_name
+        self.model_hparams = model_hparams
+        self.model_AE = self.initiate_model(self.model_name, self.model_hparams)
+        self.model_dtype = self.model_AE.model_dtype 
+
+
         
         self.depth_pre_treatment = {"method": None}
 
 
-        self.model_AE = self.initiate_model(model_name, model_hparams)
-        self.encoder, self.decoder = self.model_AE.encoder, self.model_AE.decoder
-        self.model_dtype = self.model_AE.model_dtype ##* needed for trainer summary
+
         
         self.save_hyperparameters()
 
@@ -51,11 +58,24 @@ class AutoEncoder(pl.LightningModule):
 
         batch = next(iter(self.trainer.datamodule.train_dataloader())).to(self.device)
         self.example_input_array = batch
+
         self.depth_pre_treatment = self.trainer.datamodule.depth_pre_treatment
         self.norm_stats = self.trainer.datamodule.norm_stats
         self.depth_arr = self.trainer.datamodule.depth_array
-        
         self.z_tens = torch.tensor(self.depth_arr, device=batch.device,dtype=batch.dtype)
+
+        
+        if stage == 'fit':
+            self.model_hparams['input_shape'] = batch.shape
+            self.model_hparams['device'] = batch.device 
+            self.model_AE = self.initiate_model(self.model_name, self.model_hparams)
+            self.set_last_activation_fucntion()
+            self.encoder, self.decoder = self.model_AE.encoder, self.model_AE.decoder
+
+            check_differentiable(batch, self, verbose=False, raise_error=True)
+
+
+
 
         self.max_significant_depth = 300
 
@@ -114,33 +134,45 @@ class AutoEncoder(pl.LightningModule):
 
 
     def on_train_start(self):
-        batch = next(iter(self.trainer.datamodule.train_dataloader())).to(self.device)
-        check_differentiable(batch,self,verbose=False,raise_error=True)
+        pass
+        # self.model_AE = self.initiate_model(self.model_name, self.model_hparams)
+        # self.set_last_activation_fucntion()
+        # self.encoder, self.decoder = self.model_AE.encoder, self.model_AE.decoder
 
         # with torch.no_grad():
+        #     # Initialize encoder weights and bias for identity function
         #     conv_weights = self.encoder.net[0].weight
         #     conv_weights.fill_(0)
-        #     conv_weights[:,:, :, 3, 3] = 1  
+        #     conv_weights[:, :, 3, 3, 3] = 1  # Assuming kernel size is 7x7x7
 
-        #     self.encoder.net[0].bias[:] = 0
+        #     self.encoder.net[0].bias.fill_(0)
 
+        #     # Initialize decoder weights and bias for identity function
         #     conv_weights = self.decoder.net[0].weight
         #     conv_weights.fill_(0)
-        #     conv_weights[:,:, 0, 3, 3] = 1  
+        #     conv_weights[:, :, 3, 3, 3] = 1  # Assuming kernel size is 7x7x7
 
-        #     self.decoder.net[0].bias[:] = 0
+        #     self.decoder.net[0].bias.fill_(0)
 
+
+        
+
+    def on_test_start(self):
+        pass
+
+            
 
     def training_step(self, batch, batch_idx):
-
+        self.train()
         batch.requires_grad = True
         return self.step(batch,'train')
     
     def validation_step(self, batch, batch_idx):
+        self.eval()
         return self.step(batch,'val')
     
-    def test_step(self, batch):
-
+    def test_step(self, batch, batch_idx):
+        self.eval()
         return self.step(batch,'test')
     
 
@@ -173,7 +205,7 @@ class AutoEncoder(pl.LightningModule):
         + self.loss_weight['max_value_weight'] * max_value_loss
 
         if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
-            
+
             pass
 
         else:
@@ -204,12 +236,12 @@ class AutoEncoder(pl.LightningModule):
             unorm_ssp_truth = self.unorm(self.ssp_truth)
 
             ssp_rmse = torch.sqrt(torch.mean((unorm_ssp_reconstructed-unorm_ssp_truth)**2))            
-            self.log("SSP RMSE", ssp_rmse, on_epoch = True)
+            self.log("SSP RMSE", ssp_rmse, on_epoch = True, reduce_fx = torch.mean)
 
             truth_max_pos = torch.argmax(unorm_ssp_truth, dim=1).detach().cpu().numpy()
             reconstructed_max_pos = torch.argmax(unorm_ssp_reconstructed, dim=1).detach().cpu().numpy()
             ecs_rmse = np.sqrt(np.mean((self.depth_arr[truth_max_pos]-self.depth_arr[reconstructed_max_pos])**2))
-            self.log("ECS RMSE", ecs_rmse, on_epoch = True)
+            self.log("ECS RMSE", ecs_rmse, on_epoch = True, reduce_fx = torch.mean)
 
 
         self.log(f"{phase}_loss", full_loss, prog_bar=False, on_step=None, on_epoch=True)
@@ -227,15 +259,30 @@ class AutoEncoder(pl.LightningModule):
         
     
 
-
-
-    
     def initiate_model(self,model_name, model_hparams):
         if model_name in self.model_dict:
             return self.model_dict[model_name](**model_hparams)
         else:
             assert False, f'Unknown model name "{model_name}". Available models are: {str(self.model_dict.keys())}'
 
+
+    def set_last_activation_fucntion(self):
+
+        if self.norm_stats["method"] == "min_max":
+            self.model_AE.decoder.net[-1] = nn.Sigmoid()
+        
+        elif self.norm_stats["method"] == "mean_std" or self.norm_stats["method"] == "mean_std_along_depth":
+
+            data_min = self.trainer.datamodule.min_val
+            data_max = self.trainer.datamodule.max_val
+            scale = max(abs(data_min), abs(data_max))
+            scale = scale + 0.1*scale
+            self.model_AE.decoder.net[-1] = ScaledTanh(scale) #nn.Identity() #ScaledTanh(scale)  ##See with nn.Identity()
+
+        if self.model_AE.use_final_act_fn == False:
+            self.model_AE.decoder.net[-1] = nn.Identity()
+
+         
 
 
 
@@ -263,4 +310,45 @@ class AutoEncoder(pl.LightningModule):
     
         return ssp_tens
     
+
     
+# def test_non_deterministic(func, input_tensor, num_tests=10):
+#     # Set random seeds for reproducibility
+#     torch.manual_seed(42)
+#     np.random.seed(42)
+
+#     # Run the function multiple times and store the outputs
+#     outputs = []
+#     for _ in range(num_tests):
+#         output = func(input_tensor)
+#         outputs.append(output)
+
+#     # Compare the outputs
+#     for i in range(1, num_tests):
+#         if not torch.equal(outputs[0], outputs[i]):
+#             print("The function is non-deterministic.")
+#             return
+
+#     print("The function is deterministic.")
+
+
+
+# def list_model_functions(model):
+#     print("Modules (Layers) in the model:")
+#     list_modules = []
+#     for name, module in model.named_modules():
+#         #print(f"{name}: {module}")
+#         list_modules.append((name,module))
+    
+#     return list_modules
+
+#     print("\nParameters in the model:")
+#     for name, param in model.named_parameters():
+#         print(f"{name}: {param.shape}")
+
+# def check_model_deterministic(model, input_tensor):
+
+#     list_modules = list_model_functions(model)
+#     for name, module in list_modules:
+#         test_non_deterministic(module, input_tensor)
+
