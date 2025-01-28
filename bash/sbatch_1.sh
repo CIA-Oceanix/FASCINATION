@@ -17,18 +17,22 @@ echo "Environment activated successfully."
 
 
 
-declare -a learning_rate_list=(0.00001 0.000001) # 0.00001 0.000001
-
+declare -a learning_rate_list=(0.001) # 0.00001 0.000001
+declare -a channels_list=([107,107] [107,50] [107,30] [107,10]) # [1,2,4,8]
 
 declare -a pooling_dim="depth"
 declare -a norm_stats="mean_std"
+declare -a dense=True
 declare -a interp_size=0
+declare -a linear_layer=False
+declare -a cr=10000
+declare -a pooling="None"
 
 declare -a current_branch=$(git rev-parse --abbrev-ref HEAD)
 declare -a cuda=0
-declare -a max_epoch=100
+declare -a max_epoch=150
 declare -a root_dir="/Odyssey/private/o23gauvr/outputs"
-declare -a save_dir="'$current_branch/test_on_depth'" 
+declare -a save_dir="'$current_branch/dense_on_depth'" 
 declare -a model="AE_CNN"
 
 
@@ -41,26 +45,24 @@ declare -a model="AE_CNN"
 for lr in "${learning_rate_list[@]}"
 do
 
-        IFS=',' read -r pred_weight weighted_weight grad_weight max_position_weight max_value_weight min_max_position_weight min_max_value_weight fft_weight <<< "$weights"
+    for channels in "${channels_list[@]}"
+    do
 
-        echo "(pred, weighted pred, grad, max position, max value, inflection value, inflection pos, fft) weights: $weights"
 
-        HYDRA_FULL_ERROR=1
+        HYDRA_FULL_ERROR=1 \
         srun python /Odyssey/private/o23gauvr/code/FASCINATION/main.py \
         root_save_dir=$root_dir \
         save_dir_name=$save_dir \
         trainer.max_epochs=$max_epoch \
         model.opt_fn.lr=$lr \
-        model.loss_weight.prediction_weight=$pred_weight \
-        model.loss_weight.weighted_weight=$weighted_weight \
-        model.loss_weight.gradient_weight=$grad_weight \
-        model.loss_weight.max_position_weight=$max_position_weight \
-        model.loss_weight.max_value_weight=$max_value_weight \
-        model.loss_weight.min_max_position_weight=$min_max_position_weight \
-        model.loss_weight.min_max_value_weight=$min_max_value_weight \
-        model.loss_weight.fft_weight=$fft_weight \
-        hydra.job.env_set.CUDA_VISIBLE_DEVICES=$cuda \
-
+        model_config.model_hparams.$model.channels_list=$channels \
+        model_config.model_hparams.$model.pooling=$pooling \
+        model_config.model_hparams.$model.padding.interp_size=$interp_size \
+        model_config.model_hparams.$model.linear_layer.use=$linear_layer \
+        model_config.model_hparams.$model.linear_layer.cr=$cr \
+        model_config.model_hparams.$model.dense=$dense \
+        hydra.job.env_set.CUDA_VISIBLE_DEVICES=$cuda 
+    done
 done
 
 echo "Job finished."

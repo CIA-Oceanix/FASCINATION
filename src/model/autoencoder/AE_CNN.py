@@ -35,6 +35,7 @@ class AE_CNN(nn.Module):
                  upsample_mode: str = "trilinear",
                  pooling: bool = "Max",
                  pooling_dim: str = "all",
+                 dense: bool = False,
                  linear_layer: dict = {"use": True, "cr": 1000},
                  dropout_proba: bool = 0,
                  dtype_str: str = "float32",
@@ -52,6 +53,7 @@ class AE_CNN(nn.Module):
         self.upsample_mode = upsample_mode
         self.pooling = pooling
         self.pooling_dim = pooling_dim
+        self.dense = dense
         self.linear_layer = linear_layer
         self.dropout_proba = dropout_proba
         self.dtype_str = dtype_str
@@ -68,7 +70,10 @@ class AE_CNN(nn.Module):
         elif len(self.kernel_list) < len(channels_list):
             self.kernel_list = self.kernel_list + [self.kernel_list[-1]] * (len(channels_list) - len(self.kernel_list))
 
-        if pooling_dim == "all":
+
+        if dense:
+            self.pool_str = (2,2,1)
+        elif pooling_dim == "all":
             self.pool_str = (2,2,2)
         elif pooling_dim == "depth":
             self.pool_str = (2, 1, 1)
@@ -107,7 +112,7 @@ class AE_CNN(nn.Module):
         }
 
         self.model_dtype = getattr(torch, dtype_str)
-        self.padding_mode = padding["mode"] if (padding["mode"] in ["linear", "cubic", "reflect", "replicate", "circular"]) and (padding["interp_size"]>0) else None
+        self.padding_mode =  padding["mode"] if (padding["mode"] in ["linear", "cubic", "reflect", "replicate", "circular"]) and padding["interp_size"]>0 and not self.dense  else None
         self.interp_size = padding["interp_size"] if self.padding_mode else 0
 
 
@@ -140,7 +145,10 @@ class AE_CNN(nn.Module):
         elif self.padding_mode in ["reflect", "replicate", "circular"]:
             x = torch.nn.functional.pad(x, pad=(0, 0, 0, 0, self.interp_size, self.interp_size), mode=self.padding_mode)
 
-        x = x.unsqueeze(1).repeat(1, self.channels_list[0], 1, 1, 1)
+        if self.dense:
+            x = x.unsqueeze(-1)
+        else:
+            x = x.unsqueeze(1).repeat(1, self.channels_list[0], 1, 1, 1)
         z = self.encoder(x)
         self.bottleneck_shape = z.shape
         self.cr = x.shape.numel() / z.shape.numel()
@@ -150,7 +158,11 @@ class AE_CNN(nn.Module):
         
 
         x_hat = self.decoder(z)
-        x_hat = x_hat.squeeze(1)
+
+        if self.dense:
+            x_hat = x_hat.squeeze(-1)
+        else:
+            x_hat = x_hat.squeeze(1)
 
         if self.padding_mode is not None:
             x_hat = x_hat[:, self.interp_size:-self.interp_size]
@@ -243,29 +255,36 @@ class AE_CNN_Encoder(nn.Module):
     def __init__(self, parent):
         super().__init__()
 
-        if parent.pooling == "conv":
+        if parent.pooling == "conv" and not parent.dense:
             conv_stride = parent.pool_str
         else:
             conv_stride = 1
+
 
         layers = []
         for i in range(len(parent.channels_list)-1):
             ker = parent.kernel_list[i]
             pad = (ker - 1) // 2
 
-            if parent.pooling_dim == "all":
-                parent.pooling_layer.kernel_size = ker
-                parent.pooling_layer.padding = pad
+            if parent.dense:
+                ker_mask = (0,0,0)
+
+            elif parent.pooling_dim == "all":
+                ker_mask = (1,1,1)
+
             elif parent.pooling_dim == "depth":
-                ker = (ker, 1, 1)
-                pad = (pad, 0, 0)
-                parent.pooling_layer.kernel_size = ker
-                parent.pooling_layer.padding = pad
+                ker_mask = (1,0,0)
+
             elif parent.pooling_dim == "spatial":
-                ker = (1, ker, ker)
-                pad = (0, pad, pad)
-                parent.pooling_layer.kernel_size = ker
-                parent.pooling_layer.padding = pad
+                ker_mask = (0,1,1)
+            
+
+
+
+            ker = tuple(k if m == 1 else 1 for k, m in zip((ker,)*3, ker_mask))
+            pad = tuple(p * m for p, m in zip((pad,)*3, ker_mask))
+            parent.upsample_layer.kernel_size = ker
+            parent.upsample_layer.padding = pad
 
             conv_layer = nn.Conv3d(in_channels=parent.channels_list[i], out_channels=parent.channels_list[i + 1], kernel_size=ker, stride=conv_stride, padding=pad, dtype=parent.model_dtype)
             layers.extend([conv_layer, parent.pooling_layer, parent.act_fn])
@@ -315,10 +334,16 @@ class AE_CNN_Decoder(nn.Module):
     def __init__(self, parent):
         super().__init__()
 
+        output_size = (parent.input_shape[-3]+2*parent.interp_size, *parent.input_shape[-2:])
+
         if parent.pooling == "conv":
             conv_stride = parent.pool_str
         else:
             conv_stride = 1
+        
+        if parent.dense:
+            conv_stride = 1
+            output_size = (*parent.input_shape[-2:],1)
 
         layers = []
         kernel_list = parent.kernel_list[::-1]
@@ -347,22 +372,28 @@ class AE_CNN_Decoder(nn.Module):
             ker = kernel_list[i]
             pad = (ker - 1) // 2
 
-            if parent.pooling_dim == "all":
-                parent.upsample_layer.kernel_size = ker
-                parent.upsample_layer.padding = pad
+            if parent.dense:
+                ker_mask = (0,0,0)
+
+            elif parent.pooling_dim == "all":
+                ker_mask = (1,1,1)
+
             elif parent.pooling_dim == "depth":
-                ker = (ker, 1, 1)
-                pad = (pad, 0, 0)
-                parent.upsample_layer.kernel_size = ker
-                parent.upsample_layer.padding = pad
+                ker_mask = (1,0,0)
+
             elif parent.pooling_dim == "spatial":
-                ker = (1, ker, ker)
-                pad = (0, pad, pad)
-                parent.upsample_layer.kernel_size = ker
-                parent.upsample_layer.padding = pad
+                ker_mask = (0,1,1)
+            
+
+
+
+            ker = tuple(k if m == 1 else 1 for k, m in zip((ker,)*3, ker_mask))
+            pad = tuple(p * m for p, m in zip((pad,)*3, ker_mask))
+            parent.upsample_layer.kernel_size = ker
+            parent.upsample_layer.padding = pad
 
             if parent.pooling == "conv":
-                output_pad = 1
+                output_pad = ker_mask
 
             conv_transpose_layer = nn.ConvTranspose3d(in_channels=channels_list[i], out_channels=channels_list[i + 1], kernel_size=ker, stride=conv_stride, padding=pad, output_padding=output_pad, dtype=parent.model_dtype)
             layers.append(conv_transpose_layer)
@@ -370,10 +401,10 @@ class AE_CNN_Decoder(nn.Module):
 
             if i == len(channels_list)-2:
                 if parent.final_upsample_str == "upsample_pooling":
-                    layers[-2:-1] = (parent.upsample_layer, nn.AdaptiveMaxPool3d(output_size = parent.input_shape[1:]))
+                    layers[-2:-1] = (parent.upsample_layer, nn.AdaptiveMaxPool3d(output_size = output_size))
             
                 elif parent.final_upsample_str == "upsample":
-                    layers[-2] = nn.Upsample(size = parent.input_shape[1:], mode = parent.upsample_mode)
+                    layers[-2] = nn.Upsample(size = output_size, mode = parent.upsample_mode)
 
 
             if parent.n_conv_per_layer > 1:
@@ -401,6 +432,11 @@ class AE_CNN_Decoder(nn.Module):
 
 
         return self.net(z)
+
+
+
+
+
 
 
 

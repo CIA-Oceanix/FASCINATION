@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --partition=Odyssey            
-#SBATCH --job-name=AE_training  
+#SBATCH --job-name=UwU  
 #SBATCH --gres=gpu:l40s:1       
 #SBATCH --output=/Odyssey/private/o23gauvr/code/FASCINATION/logs/job_%j.log            
 
