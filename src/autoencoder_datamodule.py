@@ -120,14 +120,14 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
                 self.input = self.input.fillna(-6)
 
         if stage == 'fit':
-            self.train_data_da = self.input.isel(time=self.train_time_idx)
+            self.train_da = self.input.isel(time=self.train_time_idx)
             val_data_da = self.input.isel(time=self.val_time_idx)
-            self.train_ds = AE_BaseDataset_3D(self.train_data_da)
+            self.train_ds = AE_BaseDataset_3D(self.train_da)
             self.val_ds = AE_BaseDataset_3D(val_data_da)
 
         if stage == 'test':
-            self.test_data_da = self.input.isel(time=self.test_time_idx)
-            self.test_ds = AE_BaseDataset_3D(self.test_data_da)
+            self.test_da = self.input.isel(time=self.test_time_idx)
+            self.test_ds = AE_BaseDataset_3D(self.test_da)
 
     def train_dataloader(self):
         return torch.utils.data.DataLoader(self.train_ds, shuffle=False, drop_last=self.drop_last_batch, **self.dl_kw)

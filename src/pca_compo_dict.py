@@ -1,4 +1,3 @@
-
 import sys
 import os
 
@@ -29,10 +28,11 @@ def get_min_max_idx(arr,axs=1, pad=True):
     return min_max
 
 
-def calculate_confusion_matrix_and_f1_score(min_max_idx_truth, min_max_idx_pca, as_ratio=False):
+def calculate_confusion_matrix_and_f1_score(min_max_idx_truth, min_max_idx_pca,axs=1, as_ratio=False):
     # Define the kernel
-    kernel = np.ones((1, 7, 1, 1))  # Shape: [D1, D2, D3]
-
+    kernel_shape = [1] * min_max_idx_truth.ndim
+    kernel_shape[axs] = 7  # Set the size of the kernel along the specified axis
+    kernel = np.ones(kernel_shape)
     # Expand the truth array with the kernel
     truth_expanded = convolve(min_max_idx_truth, kernel, mode='constant', cval=0.0)
     pca_expanded = convolve(min_max_idx_pca, kernel, mode='constant', cval=0.0)
@@ -79,17 +79,15 @@ class NoConvAE(nn.Module):
                  pooling_mode:str = "Avg"):
 
 
-        super().__init__()
+        super().__init__()  
 
+        self.pooling_dim = pooling_dim
         self.upsample_mode = "trilinear"
 
 
         if pooling_dim == "all":
-            pool_str = 2
-            
-        elif pooling_dim == "depth":
             pool_str = (2,1,1)
-
+            
         elif pooling_dim == "spatial":
             pool_str = (1,2,2)
         
@@ -121,14 +119,20 @@ class NoConvAE(nn.Module):
     
     def forward(self,x):
 
-        self.decoder[-1].size = x.shape[-3:]
-
+        if self.pooling_dim == "all":
+            x = x.transpose(0,1).unsqueeze(-1).unsqueeze(-1)
         x = x.unsqueeze(1)
 
+        
+        self.decoder[-1].size = x.shape[2:]
         self.bottleneck = self.encoder(x)
 
-        self.output = self.decoder(self.bottleneck).squeeze(1)
-    
+        self.output = self.decoder(self.bottleneck).squeeze()
+
+        
+        if self.pooling_dim == "all":
+            self.output = self.output.transpose(0,1)
+
 
         return self.output
 
@@ -141,19 +145,22 @@ class NoConvAE(nn.Module):
 if __name__ == "__main__":
 
     verbose = True
-
     unorm = False 
+    xp="dense_ae" #autoencoder_V2 #dense_ae
+    use_4D_dif_pca = False or xp=="autoencoder_V2"     # Use Differentiable PCA only for autoencoder_V2 data
+    pooling_dim = "spatial" if xp == "autoencoder_V2" else "all"
+
+    min_components =  107
+    n_layers = 10
+    gpu = 0
     
-    cfg_path = "config/xp/autoencoder_V2.yaml"
+    cfg_path = f"config/xp/{xp}.yaml"
     cfg = OmegaConf.load(cfg_path)
 
     cfg.dtype = "float64"
 
-    n_layers = 10
 
-    pca_algo_dif = False
 
-    gpu = 0
         
     if torch.cuda.is_available() and gpu is not None:
     ##This may not be necessary outside the notebook
@@ -207,37 +214,55 @@ if __name__ == "__main__":
         ae_rmse_dict["lat_lon_shape"][f"Pool_upsample_{n}_layers"] = {}
     
 
-    for n_components in tqdm(range(1,108), unit = "components", desc = "Computing PCA components", disable = not(verbose)):
+    for n_components in tqdm(range(min_components,108), unit = "components", desc = "Computing PCA components", disable = not(verbose)):
 
         pca = PCA(n_components = n_components, svd_solver = 'auto')
-        pca.fit(train_ssp_arr.transpose(0,2,3,1).reshape(-1,train_ssp_arr.shape[1]))
+        # Select training data based on xp type
+        if xp == "autoencoder_V2":
+            train_data = train_ssp_arr.transpose(0,2,3,1).reshape(-1, train_ssp_arr.shape[1])
+        else:  # AE_dense: data is already 2D (signals, depth)
+            train_data = train_ssp_arr
+        pca.fit(train_data)
         
-        #pca_dict[n_components] = pca
-        
-        if pca_algo_dif:
-            dif_pca = Differentiable4dPCA(pca, batch_shape=test_ssp_tens.shape , device = test_ssp_tens.device, dtype=test_ssp_tens.dtype)
-            pca_reduced_test_ssp_tens = dif_pca.transform(test_ssp_tens) 
-
+        if xp == "autoencoder_V2":
+            test_data = test_ssp_arr.transpose(0,2,3,1).reshape(-1, test_ssp_arr.shape[1])
         else:
-            pca_reduced_test_ssp_tens = torch.tensor(pca.transform(test_ssp_arr.transpose(0,2,3,1).reshape(-1,test_ssp_arr.shape[1])).reshape(test_ssp_arr.shape[0],test_ssp_arr.shape[2],test_ssp_arr.shape[3],n_components).transpose(0,3,1,2), dtype=test_ssp_tens.dtype, device=test_ssp_tens.device)
+            test_data = test_ssp_arr
+
+        if use_4D_dif_pca:
+            dif_pca = Differentiable4dPCA(pca, batch_shape=test_ssp_tens.shape, device=test_ssp_tens.device, dtype=test_ssp_tens.dtype)
+            pca_reduced_test_ssp_tens = dif_pca.transform(test_ssp_tens)
+        else:
+            reduced = pca.transform(test_data)
+            if xp == "autoencoder_V2":
+                pca_reduced_test_ssp_tens = torch.tensor(
+                    reduced.reshape(test_ssp_arr.shape[0], test_ssp_arr.shape[2], test_ssp_arr.shape[3], n_components).transpose(0,3,1,2),
+                    dtype=test_ssp_tens.dtype, device=test_ssp_tens.device)
+            else:
+                pca_reduced_test_ssp_tens = torch.tensor(reduced, dtype=test_ssp_tens.dtype, device=test_ssp_tens.device)
 
         for n_layer in tqdm(range(n_layers),disable=not(verbose), unit = "layers", desc = "Computing AE layers"): 
             
-            model_ae = NoConvAE(n_layer, pooling_dim="spatial", pooling_mode="Avg")
+            
+            model_ae = NoConvAE(n_layer, pooling_dim=pooling_dim, pooling_mode="Avg")
 
             pooled_upsampled_test_ssp_tens = model_ae(pca_reduced_test_ssp_tens)
 
-            lat_lon_shape = model_ae.bottleneck.squeeze(1).shape[-2:]
-            ae_rmse_dict["lat_lon_shape"][f"Pool_upsample_{n_layer}_layers"] = lat_lon_shape
+            # Record shape only if applicable
+            if xp == "autoencoder_V2":
+                lat_lon_shape = model_ae.bottleneck.squeeze(1).shape[-2:]
+                ae_rmse_dict["lat_lon_shape"][f"Pool_upsample_{n_layer}_layers"] = lat_lon_shape
 
-            if pca_algo_dif:
+            if use_4D_dif_pca:
                 pca_unreduced_test_ssp_tens = dif_pca.inverse_transform(pooled_upsampled_test_ssp_tens)
                 pca_unreduced_test_ssp_arr = pca_unreduced_test_ssp_tens.detach().cpu().numpy()
 
             else:
-                pca_unreduced_test_ssp_arr = pca.inverse_transform(pooled_upsampled_test_ssp_tens.detach().cpu().numpy().transpose(0,2,3,1).reshape(-1,n_components)).reshape(test_ssp_arr.shape[0],test_ssp_arr.shape[2],test_ssp_arr.shape[3],test_ssp_arr.shape[1]).transpose(0,3,1,2)
-                    
-
+                unreduced = pca.inverse_transform(pooled_upsampled_test_ssp_tens.detach().cpu().numpy())
+                if xp == "autoencoder_V2":
+                    pca_unreduced_test_ssp_arr = unreduced.reshape(test_ssp_arr.shape[0], test_ssp_arr.shape[2], test_ssp_arr.shape[3], test_ssp_arr.shape[1]).transpose(0,3,1,2)
+                else:
+                    pca_unreduced_test_ssp_arr = unreduced
 
             ae_rmse_dict["SSP"][f"Pool_upsample_{n_layer}_layers"][n_components] = np.sqrt(np.mean((test_ssp_arr - pca_unreduced_test_ssp_arr) ** 2))
                 #print("SSP RMSE: ",np.sqrt(np.mean((test_ssp_arr - pca_unreduced_test_ssp_arr) ** 2)))
@@ -270,10 +295,10 @@ if __name__ == "__main__":
     # with open(f'/homes/o23gauvr/Documents/thèse/code/FASCINATION/pickle/rmse_ssp_pca_on_dm_3D_norm_{not(unorm)}.pkl', 'wb') as file:
     #     pickle.dump(rmse_dict_pca_ssp_per_componnents, file)
 
-    if pca_algo_dif:
+    if use_4D_dif_pca:
         pca_name = "dif_pca"
     else:
         pca_name = "sklearn_pca"
 
-    with open(f'pickle/rmse_pca_all_components_with_pooling_upsampling_unorm_{pca_name}.pkl', 'wb') as f:
+    with open(f'pickle/rmse_pca_all_components_with_pooling_upsampling_unorm_xp_{xp}_{pca_name}.pkl', 'wb') as f:
         pickle.dump(ae_rmse_dict, f)

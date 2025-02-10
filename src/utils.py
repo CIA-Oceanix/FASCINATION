@@ -13,7 +13,6 @@ import numpy as np
 from omegaconf import DictConfig
 import src.differentiable_fonc as DF
 import src.activation_function as AF
-
 import os 
 import sys
 
@@ -82,7 +81,7 @@ def model_setup(lit_model,
     lit_model.norm_stats = dm.norm_stats
     lit_model.depth_arr = dm.depth_array
 
-    lit_model.model_hparams['input_shape'] = dm.test_data_da.shape
+    lit_model.model_hparams['input_shape'] = dm.test_da.shape
     lit_model.model_hparams['device'] = lit_model.device 
     lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams)
     lit_model = set_last_activation_fucntion(lit_model, dm)
@@ -117,10 +116,10 @@ def loading_datamodule_phase(dm, phase = "fit"):
     dm.setup(stage = phase) 
     
     if phase == "fit": 
-        ssp_arr = dm.train_data_da.data 
+        ssp_arr = dm.train_da.data 
 
     elif phase == "test":
-        ssp_arr = dm.test_data_da.data
+        ssp_arr = dm.test_da.data
 
     #ssp_tens = torch.tensor(ssp_arr).float().to(device)
                   
@@ -133,10 +132,10 @@ def loading_datamodule(dm):
     dm.setup(stage="fit") 
     dm.setup(stage="test") 
         
-    train_ssp_arr = dm.train_data_da.data
+    train_ssp_arr = dm.train_da.data
     #train_ssp_tens = torch.tensor(train_ssp_arr).float().to(device)
     
-    test_ssp_arr = dm.test_data_da.data
+    test_ssp_arr = dm.test_da.data
     #test_ssp_tens = torch.tensor(test_ssp_arr).float().to(device)
                 
     return train_ssp_arr, test_ssp_arr, dm

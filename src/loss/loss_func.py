@@ -64,14 +64,23 @@ class DiceBCELoss(nn.Module):
     
 
 
-def fourier_loss(outputs, inputs):
-    outputs_fft = torch.fft.fft(outputs, dim=2)
-    inputs_fft = torch.fft.fft(inputs, dim=2)
+def fourier_loss(outputs, inputs, depth_dim=1):
+    outputs_fft = torch.fft.fft(outputs, dim=depth_dim)
+    inputs_fft = torch.fft.fft(inputs, dim=depth_dim)
     return torch.mean((torch.abs(outputs_fft) - torch.abs(inputs_fft)) ** 2)
 
 
 
-def weighted_mse_loss(outputs, inputs, depth_tens, significant_depth, decay_factor = 0.1):
+def error_treshold_based_mse_loss(inputs, outputs, max_value_threshold=3.0):
+    mask = torch.abs(inputs-outputs) > max_value_threshold
+    masked_inputs = inputs[mask]
+    masked_outputs = outputs[mask]
+    mse_loss = nn.MSELoss()(masked_outputs, masked_inputs)
+    return mse_loss
+
+
+
+def weighted_mse_loss(outputs, inputs, depth_tens, significant_depth, decay_factor = 1000):  #decay_factor = 0.1
 
     signal_length = len(depth_tens)
 
@@ -79,7 +88,7 @@ def weighted_mse_loss(outputs, inputs, depth_tens, significant_depth, decay_fact
 
     max_significant_depth_idx = torch.searchsorted(depth_tens, significant_depth, right=False)
 
-    weights[:max_significant_depth_idx] = 1.0  # Strong emphasis on the first 30 points
+    weights[:max_significant_depth_idx] = 1.0  # Strong emphasis on the first points
     weights[max_significant_depth_idx+1:] = torch.exp(-decay_factor * torch.arange(max_significant_depth_idx+1, signal_length))
 
     # Reshape to match inputs shape
@@ -105,8 +114,10 @@ def min_max_position_and_value_loss(inputs,outputs, depth_dim=1, tau = 10):
 
     signal_length = inputs.shape[1]
     min_max_inputs_mask = DF.differentiable_min_max_search(inputs,dim=depth_dim,tau=tau)
-    min_max_outputs_mask = DF.differentiable_min_max_search(outputs,dim=depth_dim,tau=tau)
-    index_tensor = torch.arange(0, signal_length,device=inputs.device, dtype=inputs.dtype).view(1, -1, 1, 1)
+    min_max_outputs_mask = DF.differentiable_min_max_search(outputs, dim=depth_dim, tau=tau)
+    signal_shape = [1] * inputs.dim()
+    signal_shape[depth_dim] = -1
+    index_tensor = torch.arange(0, signal_length, device=inputs.device, dtype=inputs.dtype).view(*signal_shape) 
     truth_inflex_pos = (min_max_inputs_mask * index_tensor).sum(dim=depth_dim)/min_max_inputs_mask.sum(dim=depth_dim)
     pred_inflex_pos = (min_max_outputs_mask * index_tensor).sum(dim=depth_dim)/min_max_outputs_mask.sum(dim=depth_dim)
 

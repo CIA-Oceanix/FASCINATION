@@ -117,16 +117,19 @@ class Differentiable4dPCA(nn.Module):
 
 
 
-def differentiable_min_max_search(tensor, dim = 1, tau=10):
-
-    grad = torch.diff(tensor,dim=dim)
-
-    grad_sign = differentiable_sign(grad,tau)
-
-    inflection_points = torch.diff(grad_sign,dim=1)
-    inflection_points = differentiable_sign(inflection_points,tau)
+def differentiable_min_max_search(tensor, dim=1, tau=10):
+    grad = torch.diff(tensor, dim=dim)
+    grad_sign = differentiable_sign(grad, tau)
+    inflection_points = torch.diff(grad_sign, dim=dim)
+    inflection_points = differentiable_sign(inflection_points, tau)
     inflection_points = torch.abs(inflection_points)
-    inflection_points = F.pad(inflection_points,pad=(0,0,0,0,1,1),value=1)
+
+    # Create padding tuple dynamically based on the tensor dimensions and the specified dim
+    pad = [0] * (2 * tensor.dim())
+    pad[-(2 * dim + 1)] = 1
+    pad[-(2 * dim + 2)] = 1
+
+    inflection_points = F.pad(inflection_points, pad=tuple(pad), value=1)
 
     return inflection_points
 

@@ -506,4 +506,3 @@ def test_encoder_deterministic(encoder, input_tensor):
 #         input_tensor = module_outputs[module]
 #     print("All modules in the encoder are deterministic.")
 #     return True
-

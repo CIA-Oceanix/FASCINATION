@@ -72,7 +72,7 @@ datamodule:
     batch_size: 4
     num_workers: 2
   norm_stats:
-    method:  mean_std #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
+    method:  min_max #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
     params: ${normalization.${datamodule.norm_stats.method}}
   manage_nan: suppress
   n_profiles: null #100000

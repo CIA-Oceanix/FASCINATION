@@ -14,17 +14,17 @@ def base_training(trainer, dm, lit_mod, dim = "3D", test_dm=None, ckpt=None, pic
     os.makedirs(trainer.logger.log_dir, exist_ok=True)
     
     
-    model_summary = summary(lit_mod,
-                            input_size = lit_mod.model_AE.input_shape, 
-                            device = lit_mod.device.type, 
-                            batch_dim = None, 
-                            dtypes=[lit_mod.model_dtype],
-                            col_names = ["input_size","output_size","num_params","params_percent","mult_adds"], 
-                            verbose = 1)
+    # model_summary = summary(lit_mod,
+    #                         input_size = lit_mod.model_AE.input_shape, 
+    #                         device = lit_mod.device.type, 
+    #                         batch_dim = None, 
+    #                         dtypes=[lit_mod.model_dtype],
+    #                         col_names = ["input_size","output_size","num_params","params_percent","mult_adds"], 
+    #                         verbose = 1)
 
     
-    with open(f"{trainer.logger.log_dir}/model_summary.log", 'w+') as f:
-        f.write(str(model_summary))
+    # with open(f"{trainer.logger.log_dir}/model_summary.log", 'w+') as f:
+    #     f.write(str(model_summary))
     
     
     
