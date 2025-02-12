@@ -1,7 +1,7 @@
 # @package _global_
 
 paths:
-    sound: /Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc
+    sound: /Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc #/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc #/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc
     #variables: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_at_0_regrid_0_1000m.nc
 
 
@@ -39,10 +39,10 @@ trainer:
     _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
     save_dir: ${root_save_dir}/${save_dir_name}/AE/  #/DATASET/envs/o23gauvr/outputs/AE_V2/ #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/
     name: ${model.model_name}    #ecs_${model.loss_weight.ecs_weight}
-    version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.min_max_position_weight}_inflection_value_${model.loss_weight.min_max_value_weight}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/pSrofiles_ratio${datamodule.profile_ratio}/${now:%Y-%m-%d_%H-%M}
+    version: pred_${model.loss_weight.prediction_weight}_weighted_${model.loss_weight.weighted_weight}_gradient_${model.loss_weight.gradient_weight}_error_treshold_${model.loss_weight.error_treshold_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_min_max_pos_${model.loss_weight.min_max_position_weight}_min_max_value_${model.loss_weight.min_max_value_weight}_fft_${model.loss_weight.fft_weight}_ecs_${model.loss_weight.ecs_weight}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/${model_config.save_dir.${model_architecture}}/${now:%Y-%m-%d_%H-%M}
     log_graph : True
 
-  max_epochs: 100
+  max_epochs: 1
 
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
@@ -74,7 +74,7 @@ datamodule:
     params: ${normalization.${datamodule.norm_stats.method}}
     norm_location: AE #datamodule #AE
   manage_nan: supress_with_max_depth
-  profile_ratio: 0.005 
+  profile_ratio: -1 
   data_selection: spatial_sampling #spatial_sampling
   
 
@@ -125,7 +125,7 @@ model_config:
 
 
   save_dir:
-    AE_CNN: dense_${model.model_hparams.dense}/pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_layer_${model.model_hparams.linear_layer.use}/cr_${model.model_hparams.linear_layer.cr}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding.mode}/interp_size_${model.model_hparams.padding.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}/use_final_act_fn_${model.model_hparams.use_final_act_fn}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
+    AE_Dense: features_${model.model_hparams.features_list}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
 
 
 entrypoints:

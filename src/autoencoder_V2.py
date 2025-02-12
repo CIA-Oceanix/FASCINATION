@@ -219,24 +219,24 @@ class AutoEncoder(pl.LightningModule):
     
     def step(self, batch, phase = ""):
         
-        self.ssp_truth = batch   
-        ssp_reconstructed = self(self.ssp_truth)
+        ssp_truth = batch   
+        ssp_reconstructed = self(ssp_truth)
 
         if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
-            self.ssp_truth = self.dif_pca_4D.transform(self.ssp_truth)
+            ssp_truth = self.dif_pca_4D.transform(ssp_truth)
             ssp_reconstructed = self.dif_pca_4D.transform(ssp_reconstructed)
 
 
-        pred_loss = nn.MSELoss()(ssp_reconstructed, self.ssp_truth)
+        pred_loss = nn.MSELoss()(ssp_reconstructed, ssp_truth)
         self.log(f"prediction loss", pred_loss, prog_bar=False, on_step=None, on_epoch=True)
 
-        weighted_loss = weighted_mse_loss(ssp_reconstructed, self.ssp_truth, self.z_tens, self.max_significant_depth, decay_factor = 1000)
+        weighted_loss = weighted_mse_loss(ssp_reconstructed, ssp_truth, self.z_tens, self.max_significant_depth, decay_factor = 1000)
         self.log(f"weighted loss", weighted_loss, prog_bar=False, on_step=None, on_epoch=True)
 
-        treshold_loss = error_treshold_based_mse_loss(self.ssp_truth, ssp_reconstructed, max_value_threshold=3.0)
+        treshold_loss = error_treshold_based_mse_loss(ssp_truth, ssp_reconstructed, max_value_threshold=3.0)
         self.log(f"treshold loss", treshold_loss, prog_bar=False, on_step=None, on_epoch=True)
 
-        max_value_loss, max_position_loss = max_position_and_value_loss(self.ssp_truth, ssp_reconstructed)
+        max_value_loss, max_position_loss = max_position_and_value_loss(ssp_truth, ssp_reconstructed)
         self.log(f"max position loss", max_position_loss, prog_bar=False, on_step=None, on_epoch=True)
         self.log(f"max value loss", max_value_loss, prog_bar=False, on_step=None, on_epoch=True)
                     
@@ -252,14 +252,14 @@ class AutoEncoder(pl.LightningModule):
 
         else:
 
-            gradient_loss = gradient_mse_loss(self.ssp_truth, ssp_reconstructed, self.z_tens)
+            gradient_loss = gradient_mse_loss(ssp_truth, ssp_reconstructed, self.z_tens)
             self.log(f"gradient loss", gradient_loss, prog_bar=False, on_step=None, on_epoch=True)
 
-            min_max_pos_loss, min_max_value_loss = min_max_position_and_value_loss(self.ssp_truth, ssp_reconstructed)
+            min_max_pos_loss, min_max_value_loss = min_max_position_and_value_loss(ssp_truth, ssp_reconstructed)
             self.log(f"min max position loss", min_max_pos_loss, prog_bar=False, on_step=None, on_epoch=True)
             self.log(f"min max value loss", min_max_value_loss, prog_bar=False, on_step=None, on_epoch=True)
 
-            fft_loss = fourier_loss(ssp_reconstructed, self.ssp_truth)
+            fft_loss = fourier_loss(ssp_reconstructed, ssp_truth)
             self.log(f"fft loss", fft_loss, prog_bar=False, on_step=None, on_epoch=True)
 
             full_loss = full_loss + self.normalized_loss_weight['gradient_weight'] * gradient_loss \
@@ -271,12 +271,14 @@ class AutoEncoder(pl.LightningModule):
         if phase == "test":
         
             if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
-                self.ssp_truth = self.dif_pca_4D.inverse_transform(self.ssp_truth)
+                ssp_truth = self.dif_pca_4D.inverse_transform(ssp_truth)
                 ssp_reconstructed = self.dif_pca_4D.inverse_transform(ssp_reconstructed)
 
             if self.norm_stats["norm_location"] == "datamodule":
                 ssp_reconstructed = self.unorm(ssp_reconstructed)
-                ssp_truth = self.unorm(self.ssp_truth)
+                ssp_truth = self.unorm(ssp_truth)
+            
+
 
             ssp_rmse = torch.sqrt(torch.mean((ssp_reconstructed-ssp_truth)**2))            
             self.log("SSP RMSE", ssp_rmse, on_epoch = True, reduce_fx = torch.mean)
@@ -285,6 +287,19 @@ class AutoEncoder(pl.LightningModule):
             reconstructed_max_pos = torch.argmax(ssp_reconstructed, dim=1).detach().cpu().numpy()
             ecs_rmse = np.sqrt(np.mean((self.depth_arr[truth_max_pos]-self.depth_arr[reconstructed_max_pos])**2))
             self.log("ECS RMSE", ecs_rmse, on_epoch = True, reduce_fx = torch.mean)
+
+
+            truth_min_max_idx = DF.differentiable_min_max_search(ssp_truth, dim=1, tau=10)
+            pred_min_max_idx = DF.differentiable_min_max_search(ssp_reconstructed, dim=1, tau=10)
+
+            f1 = f1_score(truth_min_max_idx, pred_min_max_idx,dim=1)
+            self.log("F1 score", f1, on_epoch = True, reduce_fx = torch.mean)
+
+            peab = ratio_exceeding_abs_error(ssp_truth, ssp_reconstructed, threshold=3.0)
+            self.log("PEAB", peab, on_epoch = True, reduce_fx = torch.mean)
+
+            max_abs_error = torch.sqrt(torch.max((ssp_reconstructed-ssp_truth)**2))
+            self.log("Max abs error", max_abs_error, on_epoch = True, reduce_fx = torch.max)
 
 
         self.log(f"{phase}_loss", full_loss, prog_bar=False, on_step=None, on_epoch=True)
@@ -298,7 +313,7 @@ class AutoEncoder(pl.LightningModule):
     def on_after_backward(self):   
         #writter = SummaryWriter(log_dir=f"{self.trainer.logger.log_dir}/backward_grads")  
         writter = self.trainer.logger.experiment 
-        check_abnormal_grad(model = self, input = self.ssp_truth, writter = writter, verbose=True,raise_error=False)
+        check_abnormal_grad(model = self, writter = writter, verbose=True,raise_error=False)
         
     
 

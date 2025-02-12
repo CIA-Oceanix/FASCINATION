@@ -300,14 +300,14 @@ def check_differentiable(input, model, verbose=True, raise_error=False):
         #print(f"Gradient computed for the input tensor: {input.grad}")
 
 
-def check_abnormal_grad(model, input, writter, verbose=True, raise_error=False):
+def check_abnormal_grad(model, writter, verbose=True, raise_error=False):
 
     grad_min = 1e-12
     grad_max = 1
     torch.autograd.set_detect_anomaly(True)        
 
     """Logs gradients after each backward pass."""
-    parameters = {**dict(model.named_parameters()), 'input': input}  ##? grad in input ??
+    parameters = {**dict(model.named_parameters())}  ##? grad in input ??
     for name, param in parameters.items():
         if param.grad is not None:
             # Log gradient histograms

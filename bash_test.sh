@@ -1,23 +1,7 @@
-#!/bin/bash -l
-#SBATCH --partition=Odyssey            
-#SBATCH --job-name=UwU  
-#SBATCH --gres=gpu:l40s:1       
-#SBATCH --output=/Odyssey/private/o23gauvr/code/FASCINATION/logs/job_%j.log            
-#SBATCH --exclusive=user
+#!/bin/bash
 
 
-echo "Job started."
-
-
-source /Odyssey/private/o23gauvr/start_conda.sh
-conda activate run_model
-echo "Environment activated successfully."
-
-
-
-
-
-declare -a features_list=([5000,3000,1000,157] [5000,3000,1000,100] [5000,3000,1000,50]) # [1,2,4,8]
+declare -a features_list=([5000,3000,1000,157] [5000,3000,1000,100] [5000,3000,1000,50]]) # [1,2,4,8]
 declare -a loss_weights_list=("1,1,0,0.1,0,0,0,0,0,0")
 
 declare -a model="AE_Dense"
@@ -64,6 +48,7 @@ do
         model.loss_weight.ecs_weight=$ecw \
         model_config.model_hparams.$model.features_list=$features \
         hydra.job.env_set.CUDA_VISIBLE_DEVICES=$cuda 
+        break 3
     done
 done
 

@@ -22,6 +22,7 @@ class AutoEncoderDatamodule_1D(pl.LightningDataModule):
         self.profile_ratio = profile_ratio  # ratio for selecting profiles or time points
         self.data_selection = data_selection  # "random" or "spatial_sampling"
         self.space_ratio = 0.2        # For spatial_sampling mode (e.g. 0.5 means every 2 points)
+        self.time_ratio = 0.1         # For random mode (e.g. 0.5 means half the time points)
         self.seed = 42                      # Fixed seed for reproducibility
         self.dtype_str = dtype_str
         self.coords = input_da.coords
@@ -82,20 +83,28 @@ class AutoEncoderDatamodule_1D(pl.LightningDataModule):
             # Spatial subsampling: select every kth point based on space_ratio
             if self.space_ratio is None or self.space_ratio <= 0 or self.space_ratio > 1:
                 raise ValueError("space_ratio must be in (0,1] for spatial_sampling.")
-            k = int(round(1 / self.space_ratio))
+            
+            if self.profile_ratio is not None and abs(self.profile_ratio) < 1:
+                self.time_ratio = self.profile_ratio/self.space_ratio**2
+                #n_time = min(int(self.time_ratio * time_size), time_size)
+            # else:
+            #     n_time = self.time_ratio*time_size
+    
+            space_factor = int(round(1 / self.space_ratio))
+            time_factor = int(round(1 / self.time_ratio))
             # Select every kth latitude and longitude
-            da_spatial = self.input.isel(lat=slice(0, None, k), lon=slice(0, None, k))
+            da_sampled = self.input.isel(time=slice(0,None,time_factor),lat=slice(0, None, space_factor), lon=slice(0, None, space_factor))
             # Randomly select a fraction of time points based on profile_ratio
-            time_size = da_spatial.sizes["time"]
-            if self.profile_ratio is not None and self.profile_ratio < 1:
-                n_time = min(int(self.profile_ratio/self.space_ratio**2 * time_size), time_size)
-            else:
-                n_time = time_size
-            rng = np.random.default_rng(self.seed)
-            time_indices = rng.permutation(time_size)[:n_time]
-            da_spatial = da_spatial.isel(time=sorted(time_indices))
+
+            #time_indices = rng.permutation(time_size)[:n_time]
+            #da_spatial = da_spatial.isel(time=sorted(time_indices))
             # Stack the remaining spatial dimensions into "profiles"
-            da_stacked = da_spatial.stack(profiles=("time", "lat", "lon"))
+            da_stacked = da_sampled.stack(profiles=("time", "lat", "lon"))
+            total_profiles = da_stacked.sizes["profiles"]
+            rng = np.random.default_rng(self.seed)
+            profile_indices = rng.permutation(total_profiles)
+            da_stacked = da_stacked.isel(profiles=profile_indices)
+
         else:
             # Default: stack without reordering
             da_stacked = self.input.stack(profiles=("time", "lat", "lon"))

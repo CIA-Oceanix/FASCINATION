@@ -1,6 +1,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import src.differentiable_fonc as DF
 
 class DiceLoss(nn.Module):
@@ -138,3 +139,55 @@ def gradient_mse_loss(inputs, outputs, depth_tens, depth_dim=1):
     gradient_loss =  nn.MSELoss()(ssp_gradient_inputs, ssp_gradient_outputs) 
     return gradient_loss
 
+
+
+def f1_score(min_max_idx_truth, min_max_idx_ae, dim=1):
+    # Define the kernel based on the shape of the truth tensor
+    kernel_shape = [1] * (min_max_idx_truth.ndim - 1)
+    kernel_shape[0] = 10  # Set the size of the kernel along the specified axis
+    kernel = torch.ones(kernel_shape, device=min_max_idx_truth.device, dtype=min_max_idx_truth.dtype)
+
+    if min_max_idx_truth.ndim == 2:
+        # Expand the truth tensor with the kernel for 2D inputs
+        truth_expanded = F.conv1d(min_max_idx_truth.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+        ae_expanded = F.conv1d(min_max_idx_ae.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+    elif min_max_idx_truth.ndim == 4:
+        # Expand the truth tensor with the kernel for 4D inputs
+        truth_expanded = F.conv3d(min_max_idx_truth.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+        ae_expanded = F.conv3d(min_max_idx_ae.unsqueeze(0).unsqueeze(0).unsqueeze(0), kernel.unsqueeze(0).unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+    else:
+        raise ValueError("Unsupported input dimensions")
+
+    # Compute the true positives
+    true_positives = (truth_expanded > 0) & (min_max_idx_ae > 0)
+    num_true_positives = torch.sum(true_positives).item()
+
+    # Compute the false positives
+    false_positives = (truth_expanded == 0) & (min_max_idx_ae > 0)
+    num_false_positives = torch.sum(false_positives).item()
+
+    # Compute the true negatives
+    true_negatives = (min_max_idx_truth == 0) & (min_max_idx_ae == 0)
+    num_true_negatives = torch.sum(true_negatives).item()
+
+    # Compute the false negatives
+    false_negatives = (min_max_idx_truth > 0) & (ae_expanded == 0)
+    num_false_negatives = torch.sum(false_negatives).item()
+
+    precision_score = num_true_positives / (num_true_positives + num_false_positives)
+    recall_score = num_true_positives / (num_true_positives + num_false_negatives)
+    f1_score = 2 * (precision_score * recall_score) / (precision_score + recall_score)
+
+    return f1_score
+
+
+def ratio_exceeding_abs_error(inputs, outputs, threshold=3):
+    abs_error = torch.abs(inputs - outputs)
+    exceeding_mask = abs_error > threshold
+    percentage_exceeding = torch.sum(exceeding_mask).item() / exceeding_mask.numel()
+    return percentage_exceeding
+
+def max_abs_error(inputs, outputs):
+    abs_error = torch.abs(inputs - outputs)
+    max_error = torch.max(abs_error).item()
+    return max_error

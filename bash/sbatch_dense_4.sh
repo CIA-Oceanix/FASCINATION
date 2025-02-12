@@ -17,18 +17,22 @@ echo "Environment activated successfully."
 
 
 
-declare -a features_list=([5000,3000,1000,1] [5000,3000,1000,2] [5000,3000,1000,3]]) # [1,2,4,8]
+declare -a features_list=([5000,3000,1000,1] [5000,3000,1000,2] [5000,3000,1000,3]) # [1,2,4,8]
 declare -a loss_weights_list=("1,1,0,0.1,0,0,0,0,0,0")
 
 declare -a model="AE_Dense"
-declare -a norm_stats="min_max"
+declare -a norm_stats="min_max" 
 declare -a lr=1e-4
+declare -a profile_ratio=null
+declare -a manage_nan="supress_with_max_depth"
+declare -a data_selection="spatial_sampling"
 
 declare -a current_branch=$(git rev-parse --abbrev-ref HEAD)
 declare -a cuda=0
-declare -a max_epoch=25
+declare -a max_epoch=5 
 declare -a root_dir="/Odyssey/private/o23gauvr/outputs"
 declare -a save_dir="'$current_branch'" 
+
 
 # Added loss weights array (comma-separated values: pw,ww,gw,etw,mpw,mwv,mmmp,mmwv,fw,ecw)
 
@@ -45,8 +49,9 @@ do
         model.opt_fn.lr=$lr \
         datamodule.norm_stats.method=$norm_stats \
         datamodule.norm_stats.norm_location=AE \
-        datamodule.profile_ratio=0.005 \
-        datamodule.data_selection=supress_with_max_depth \
+        datamodule.profile_ratio=$profile_ratio\
+        datamodule.data_selection=$data_selection \
+        datamodule.manage_nan=$manage_nan \
         model.loss_weight.prediction_weight=$pw \
         model.loss_weight.weighted_weight=$ww \
         model.loss_weight.gradient_weight=$gw \
