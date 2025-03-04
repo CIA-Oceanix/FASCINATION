@@ -1,7 +1,7 @@
 # @package _global_
 
 paths:
-    sound: /Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
+    sound: /Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc #/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_1000m.nc
     #variables: /DATASET/envs/o23gauvr/tmp/eNATL60_BLB002_ECS_at_0_regrid_0_1000m.nc
 
 
@@ -44,7 +44,7 @@ trainer:
     version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.min_max_position_weight}_inflection_value_${model.loss_weight.min_max_value_weight}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}_norm_on_${datamodule.depth_pre_treatment.norm_on}_train_on_${datamodule.depth_pre_treatment.train_on}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/n_profiles_${datamodule.n_profiles}/${now:%Y-%m-%d_%H-%M}
     log_graph : True
 
-  max_epochs: 100
+  max_epochs: 1
 
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
@@ -72,9 +72,10 @@ datamodule:
     batch_size: 4
     num_workers: 2
   norm_stats:
-    method:  mean_std #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
+    method: mean_std_along_depth #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
     params: ${normalization.${datamodule.norm_stats.method}}
-  manage_nan: suppress
+    norm_location: datamodule #datamodule #AE
+  manage_nan: supress_with_max_depth
   n_profiles: null #100000
   pooled_dim: ${pooled_dim} #spatial #depth  #all #None
   depth_pre_treatment: 
@@ -96,23 +97,24 @@ model:
   _target_: src.autoencoder_V2.AutoEncoder
   model_name: ${model_architecture} #_3D
   model_hparams: ${model_config.model_hparams.${model.model_name}}
+  specific_last_act_fn: null #auto #null #Identity #Sigmoid #Tanh #Identity #LeakyRelu
   opt_fn:
     _target_: src.utils.cosanneal_lr_adamw
     _partial_: true
     lr: 1e-3
-    T_max: ${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
+    T_max: 10000 #${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
     weight_decay: 1e-3 #0 #1e-3
   loss_weight:
     prediction_weight: 1 #10 #0.5 #0.01 #1
     weighted_weight: 1 #100 
-    gradient_weight: 1000 #1000000
+    gradient_weight: 0 #1000000
+    error_treshold_weight: 0
     max_position_weight: 0 #0.01 
     max_value_weight: 0 #100 
     min_max_position_weight: 0 #0.01 
     min_max_value_weight: 0 #100 
     fft_weight: 0 #0.01
     ecs_weight: 0
-  
 
 
 model_config:
@@ -136,17 +138,17 @@ model_config:
     #   dtype_str: ${dtype}
 
     AE_CNN:
-      channels_list: [107, 70, 50]
-      kernel_list: 3
-      n_conv_per_layer: 2
+      channels_list: [157, 5000, 3000, 1000, 100]
+      kernel_list: 1
+      n_conv_per_layer: 1
       padding: 
         mode: cubic #"reflect" #linear #cubic
         interp_size: 5
-      act_fn_str: "Relu"
+      act_fn_str: LeakyRelu
       use_final_act_fn: True
       final_upsample_str: "upsample" #upsample #upsample_pooling
       upsample_mode: "trilinear" #nearest
-      pooling: "Avg" #conv #Max #Avg
+      pooling: None #Avg #conv #Max #Avg
       pooling_dim: ${pooled_dim} #spatial #depth  #all #None
       dense: True
       linear_layer: 

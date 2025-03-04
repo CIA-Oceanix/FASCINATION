@@ -1,5 +1,5 @@
 entrypoints: ???
 defaults:
-  - xp: autoencoder_V2 #gaussiankernel1d #autoencoder_V2 
+  - xp: autoencoder_V2 #autoencoder_V2 #dense_ae #gaussiankernel1d  
   - _self_
 

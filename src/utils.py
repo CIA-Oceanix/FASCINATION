@@ -13,7 +13,6 @@ import numpy as np
 from omegaconf import DictConfig
 import src.differentiable_fonc as DF
 import src.activation_function as AF
-
 import os 
 import sys
 
@@ -44,7 +43,7 @@ def load_ssf_ecs_classif_da(ssf_da_path, ecs_classif_da_path):
 
 def load_model(model_ckpt_path: str,
                dm,
-               device: str, 
+               batch: torch.Tensor, 
                verbose: bool = True):
     
     #sys.path.append('/Odyssey/private/o23gauvr/code/FASCINATION/src')
@@ -56,18 +55,16 @@ def load_model(model_ckpt_path: str,
     
     lit_mod = hydra.utils.call(cfg.model)
 
-    lit_mod = model_setup(lit_mod, dm, device)
-
+    lit_mod = model_setup(lit_mod, dm, batch)
 
     # torch.serialization.add_safe_globals([DictConfig])
 
-    checkpoint = torch.load(model_ckpt_path, weights_only=False, map_location=device)
+    checkpoint = torch.load(model_ckpt_path, weights_only=False, map_location=batch.device)
     lit_mod.load_state_dict(checkpoint["state_dict"],strict=False)
     #lit_mod.load_state_dict(torch.load(model_ckpt_path, map_location=device)["state_dict"])
 
     lit_mod.verbose = verbose
 
-    lit_mod = lit_mod.to(device) # Move model to gpu for faster inference
     lit_mod = lit_mod.eval() # Model in eval mode
     for param in lit_mod.parameters():
         param.requires_grad = False  # Ensure no gradients are calculated for this model
@@ -77,19 +74,18 @@ def load_model(model_ckpt_path: str,
 
 def model_setup(lit_model,
                 dm,
-                device = "cpu"):
+                batch):
+    
     lit_model.depth_pre_treatment = dm.depth_pre_treatment
     lit_model.norm_stats = dm.norm_stats
     lit_model.depth_arr = dm.depth_array
 
-    lit_model.model_hparams['input_shape'] = dm.test_data_da.shape
-    lit_model.model_hparams['device'] = lit_model.device 
-    lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams)
-    lit_model = set_last_activation_fucntion(lit_model, dm)
+
+    lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams, batch)
 
     if lit_model.depth_pre_treatment["method"] == "pca":
         pca = dm.depth_pre_treatment["fitted_pca"]
-        lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=dm.test_shape, device=device, dtype=getattr(torch,dm.dtype_str))     
+        lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=batch.shape, device=batch.device, dtype=getattr(torch,dm.dtype_str))     
     
     return lit_model
 
@@ -117,10 +113,10 @@ def loading_datamodule_phase(dm, phase = "fit"):
     dm.setup(stage = phase) 
     
     if phase == "fit": 
-        ssp_arr = dm.train_data_da.data 
+        ssp_arr = dm.train_da.data 
 
     elif phase == "test":
-        ssp_arr = dm.test_data_da.data
+        ssp_arr = dm.test_da.data
 
     #ssp_tens = torch.tensor(ssp_arr).float().to(device)
                   
@@ -133,10 +129,10 @@ def loading_datamodule(dm):
     dm.setup(stage="fit") 
     dm.setup(stage="test") 
         
-    train_ssp_arr = dm.train_data_da.data
+    train_ssp_arr = dm.train_da.data
     #train_ssp_tens = torch.tensor(train_ssp_arr).float().to(device)
     
-    test_ssp_arr = dm.test_data_da.data
+    test_ssp_arr = dm.test_da.data
     #test_ssp_tens = torch.tensor(test_ssp_arr).float().to(device)
                 
     return train_ssp_arr, test_ssp_arr, dm
@@ -301,14 +297,14 @@ def check_differentiable(input, model, verbose=True, raise_error=False):
         #print(f"Gradient computed for the input tensor: {input.grad}")
 
 
-def check_abnormal_grad(model, input, writter, verbose=True, raise_error=False):
+def check_abnormal_grad(model, writter, verbose=True, raise_error=False):
 
     grad_min = 1e-12
     grad_max = 1
     torch.autograd.set_detect_anomaly(True)        
 
     """Logs gradients after each backward pass."""
-    parameters = {**dict(model.named_parameters()), 'input': input}  ##? grad in input ??
+    parameters = {**dict(model.named_parameters())}  ##? grad in input ??
     for name, param in parameters.items():
         if param.grad is not None:
             # Log gradient histograms

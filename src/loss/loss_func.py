@@ -1,6 +1,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import src.differentiable_fonc as DF
 
 class DiceLoss(nn.Module):
@@ -64,14 +65,26 @@ class DiceBCELoss(nn.Module):
     
 
 
-def fourier_loss(outputs, inputs):
-    outputs_fft = torch.fft.fft(outputs, dim=2)
-    inputs_fft = torch.fft.fft(inputs, dim=2)
+def fourier_loss(outputs, inputs, depth_dim=1):
+    outputs_fft = torch.fft.fft(outputs, dim=depth_dim)
+    inputs_fft = torch.fft.fft(inputs, dim=depth_dim)
     return torch.mean((torch.abs(outputs_fft) - torch.abs(inputs_fft)) ** 2)
 
 
 
-def weighted_mse_loss(outputs, inputs, depth_tens, significant_depth, decay_factor = 0.1):
+def error_treshold_based_mse_loss(inputs, outputs, max_value_threshold=3.0):
+    mask = (torch.abs(inputs - outputs) > max_value_threshold).float()
+    diff = (inputs - outputs)**2
+    # Only keep differences for masked elements
+    masked_diff = diff * mask
+    sse = masked_diff.sum()
+    n = mask.sum()
+    mse = sse / (n + 1e-8)
+    return mse
+
+
+
+def weighted_mse_loss(outputs, inputs, depth_tens, significant_depth, decay_factor = 1000):  #decay_factor = 0.1
 
     signal_length = len(depth_tens)
 
@@ -79,7 +92,7 @@ def weighted_mse_loss(outputs, inputs, depth_tens, significant_depth, decay_fact
 
     max_significant_depth_idx = torch.searchsorted(depth_tens, significant_depth, right=False)
 
-    weights[:max_significant_depth_idx] = 1.0  # Strong emphasis on the first 30 points
+    weights[:max_significant_depth_idx] = 1.0  # Strong emphasis on the first points
     weights[max_significant_depth_idx+1:] = torch.exp(-decay_factor * torch.arange(max_significant_depth_idx+1, signal_length))
 
     # Reshape to match inputs shape
@@ -105,8 +118,10 @@ def min_max_position_and_value_loss(inputs,outputs, depth_dim=1, tau = 10):
 
     signal_length = inputs.shape[1]
     min_max_inputs_mask = DF.differentiable_min_max_search(inputs,dim=depth_dim,tau=tau)
-    min_max_outputs_mask = DF.differentiable_min_max_search(outputs,dim=depth_dim,tau=tau)
-    index_tensor = torch.arange(0, signal_length,device=inputs.device, dtype=inputs.dtype).view(1, -1, 1, 1)
+    min_max_outputs_mask = DF.differentiable_min_max_search(outputs, dim=depth_dim, tau=tau)
+    signal_shape = [1] * inputs.dim()
+    signal_shape[depth_dim] = -1
+    index_tensor = torch.arange(0, signal_length, device=inputs.device, dtype=inputs.dtype).view(*signal_shape) 
     truth_inflex_pos = (min_max_inputs_mask * index_tensor).sum(dim=depth_dim)/min_max_inputs_mask.sum(dim=depth_dim)
     pred_inflex_pos = (min_max_outputs_mask * index_tensor).sum(dim=depth_dim)/min_max_outputs_mask.sum(dim=depth_dim)
 
@@ -127,3 +142,55 @@ def gradient_mse_loss(inputs, outputs, depth_tens, depth_dim=1):
     gradient_loss =  nn.MSELoss()(ssp_gradient_inputs, ssp_gradient_outputs) 
     return gradient_loss
 
+
+
+def f1_score(min_max_idx_truth, min_max_idx_ae, dim=1):
+    # Define the kernel based on the shape of the truth tensor
+    kernel_shape = [1] * (min_max_idx_truth.ndim - 1)
+    kernel_shape[0] = 10  # Set the size of the kernel along the specified axis
+    kernel = torch.ones(kernel_shape, device=min_max_idx_truth.device, dtype=min_max_idx_truth.dtype)
+
+    if min_max_idx_truth.ndim == 2:
+        # Expand the truth tensor with the kernel for 2D inputs
+        truth_expanded = F.conv1d(min_max_idx_truth.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+        ae_expanded = F.conv1d(min_max_idx_ae.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+    elif min_max_idx_truth.ndim == 4:
+        # Expand the truth tensor with the kernel for 4D inputs
+        truth_expanded = F.conv3d(min_max_idx_truth.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+        ae_expanded = F.conv3d(min_max_idx_ae.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+    else:
+        raise ValueError("Unsupported input dimensions")
+
+    # Compute the true positives
+    true_positives = (truth_expanded > 0) & (min_max_idx_ae > 0)
+    num_true_positives = torch.sum(true_positives).item()
+
+    # Compute the false positives
+    false_positives = (truth_expanded == 0) & (min_max_idx_ae > 0)
+    num_false_positives = torch.sum(false_positives).item()
+
+    # Compute the true negatives
+    true_negatives = (min_max_idx_truth == 0) & (min_max_idx_ae == 0)
+    num_true_negatives = torch.sum(true_negatives).item()
+
+    # Compute the false negatives
+    false_negatives = (min_max_idx_truth > 0) & (ae_expanded == 0)
+    num_false_negatives = torch.sum(false_negatives).item()
+
+    precision_score = num_true_positives / (num_true_positives + num_false_positives)
+    recall_score = num_true_positives / (num_true_positives + num_false_negatives)
+    f1_score = 2 * (precision_score * recall_score) / (precision_score + recall_score)
+
+    return f1_score
+
+
+def ratio_exceeding_abs_error(inputs, outputs, threshold=3):
+    abs_error = torch.abs(inputs - outputs)
+    exceeding_mask = abs_error > threshold
+    percentage_exceeding = torch.sum(exceeding_mask).item() / exceeding_mask.numel()
+    return percentage_exceeding
+
+def max_abs_error(inputs, outputs):
+    abs_error = torch.abs(inputs - outputs)
+    max_error = torch.max(abs_error).item()
+    return max_error
