@@ -69,7 +69,7 @@ class AutoEncoder(pl.LightningModule):
 
         
         if stage == 'fit':
-            self.model_hparams['input_shape'] = batch.shape
+            
             # If using AE_Dense, pass norm_stats to the model (if supported)
             self.initiate_model(self.model_name, self.model_hparams, batch)
             # For AE_Dense update its norm layers if norm_location is "AE"
@@ -318,11 +318,13 @@ class AutoEncoder(pl.LightningModule):
     
 
     def initiate_model(self,model_name, model_hparams, batch=None):
+
+        self.model_hparams['input_shape'] = batch.shape
+
         if model_name in self.model_dict:
             self.model_AE = self.model_dict[model_name](**model_hparams)
         else:
             assert False, f'Unknown model name "{model_name}". Available models are: {str(self.model_dict.keys())}'
-
 
         self.set_last_activation_function()
 
@@ -330,6 +332,8 @@ class AutoEncoder(pl.LightningModule):
             self.model_AE.update_norm_layers(self.norm_stats)
         
         self.model_AE.to(device=batch.device, dtype=batch.dtype)
+
+        return self.model_AE
 
 
     def set_last_activation_function(self):

@@ -44,6 +44,20 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
                 self.input = self.input.dropna(dim="lat")
             elif self.manage_nan == "before_normalization":
                 self.input = self.input.fillna(0)
+            elif self.manage_nan == "supress_with_max_depth":
+                max_depth = 2000
+                # Drop all lat coordinates presenting a nan for depths (z) inferior to 2000
+                # Select only data for depths < 2000
+                sub_da = self.input.sel(z=self.input.z.where(self.input.z < max_depth, drop=True))
+                # For each lat, check if there is any nan across time, z, and lon
+                lat_nan = sub_da.isnull().any(dim=["time", "z", "lon"])
+                # Get valid latitudes (i.e. where there is no nan)
+                valid_lats = lat_nan.where(lat_nan == False, drop=True).coords["lat"].values
+                # Select only the valid latitudes and drop all z coordinates superior to 2000.
+                self.input = self.input.sel(lat=valid_lats, z=self.input.z.where(self.input.z < max_depth, drop=True))
+                
+                self.coords = self.input.coords
+                self.depth_array = self.coords["z"].data
 
             if self.n_profiles is not None:
                 n_times = max(self.n_profiles // (len(self.input.lat) * len(self.input.lon)), 10)

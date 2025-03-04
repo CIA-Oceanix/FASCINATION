@@ -43,7 +43,7 @@ def load_ssf_ecs_classif_da(ssf_da_path, ecs_classif_da_path):
 
 def load_model(model_ckpt_path: str,
                dm,
-               device: str, 
+               batch: torch.Tensor, 
                verbose: bool = True):
     
     #sys.path.append('/Odyssey/private/o23gauvr/code/FASCINATION/src')
@@ -55,18 +55,16 @@ def load_model(model_ckpt_path: str,
     
     lit_mod = hydra.utils.call(cfg.model)
 
-    lit_mod = model_setup(lit_mod, dm, device)
-
+    lit_mod = model_setup(lit_mod, dm, batch)
 
     # torch.serialization.add_safe_globals([DictConfig])
 
-    checkpoint = torch.load(model_ckpt_path, weights_only=False, map_location=device)
+    checkpoint = torch.load(model_ckpt_path, weights_only=False, map_location=batch.device)
     lit_mod.load_state_dict(checkpoint["state_dict"],strict=False)
     #lit_mod.load_state_dict(torch.load(model_ckpt_path, map_location=device)["state_dict"])
 
     lit_mod.verbose = verbose
 
-    lit_mod = lit_mod.to(device) # Move model to gpu for faster inference
     lit_mod = lit_mod.eval() # Model in eval mode
     for param in lit_mod.parameters():
         param.requires_grad = False  # Ensure no gradients are calculated for this model
@@ -76,19 +74,18 @@ def load_model(model_ckpt_path: str,
 
 def model_setup(lit_model,
                 dm,
-                device = "cpu"):
+                batch):
+    
     lit_model.depth_pre_treatment = dm.depth_pre_treatment
     lit_model.norm_stats = dm.norm_stats
     lit_model.depth_arr = dm.depth_array
 
-    lit_model.model_hparams['input_shape'] = dm.test_da.shape
-    lit_model.model_hparams['device'] = lit_model.device 
-    lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams)
-    lit_model = set_last_activation_fucntion(lit_model, dm)
+
+    lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams, batch)
 
     if lit_model.depth_pre_treatment["method"] == "pca":
         pca = dm.depth_pre_treatment["fitted_pca"]
-        lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=dm.test_shape, device=device, dtype=getattr(torch,dm.dtype_str))     
+        lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=batch.shape, device=batch.device, dtype=getattr(torch,dm.dtype_str))     
     
     return lit_model
 

@@ -18,7 +18,7 @@ source activate run_model
 echo "Environment activated successfully."
 
 
-HYDRA_FULL_ERROR=1 srun python /Odyssey/private/o23gauvr/code/FASCINATION/main.py \
+HYDRA_FULL_ERROR=1 srun python /Odyssey/private/o23gauvr/code/FASCINATION/src/pca_compo_dict.py \
 
 
 

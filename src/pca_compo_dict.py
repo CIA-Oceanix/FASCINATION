@@ -126,11 +126,11 @@ class NoConvAE(nn.Module):
         
         self.decoder[-1].size = x.shape[2:]
         self.bottleneck = self.encoder(x)
-
-        self.output = self.decoder(self.bottleneck).squeeze()
-
+    
+        self.output = self.decoder(self.bottleneck).squeeze(1)
         
         if self.pooling_dim == "all":
+            self.output = self.output.squeeze(-1).squeeze(-1)
             self.output = self.output.transpose(0,1)
 
 
@@ -146,12 +146,12 @@ if __name__ == "__main__":
 
     verbose = True
     unorm = False 
-    xp="dense_ae" #autoencoder_V2 #dense_ae
+    xp="autoencoder_V2" #autoencoder_V2 #dense_ae
     use_4D_dif_pca = False or xp=="autoencoder_V2"     # Use Differentiable PCA only for autoencoder_V2 data
     pooling_dim = "spatial" if xp == "autoencoder_V2" else "all"
 
-    min_components =  107
-    n_layers = 10
+    min_components = 1 
+    n_layers = 4
     gpu = 0
     
     cfg_path = f"config/xp/{xp}.yaml"
@@ -187,11 +187,13 @@ if __name__ == "__main__":
     # train_ssp_arr, _, dm = loading_datamodule_phase(dm,device,phase="fit")
     # test_ssp_arr, test_ssp_tens, dm = loading_datamodule_phase(dm,device,phase="test")
 
-
+    max_components = train_ssp_arr.shape[1] + 1
+    if min_components == -1:
+        min_components = max_components-1
 
 
     depth_array = dm.depth_array
-
+    
 
     ecs_truth_idx = np.argmax(test_ssp_arr,axis=1)
     ecs_truth = depth_array[ecs_truth_idx]
@@ -214,7 +216,7 @@ if __name__ == "__main__":
         ae_rmse_dict["lat_lon_shape"][f"Pool_upsample_{n}_layers"] = {}
     
 
-    for n_components in tqdm(range(min_components,108), unit = "components", desc = "Computing PCA components", disable = not(verbose)):
+    for n_components in tqdm(range(min_components,max_components), unit = "components", desc = "Computing PCA components", disable = not(verbose)):
 
         pca = PCA(n_components = n_components, svd_solver = 'auto')
         # Select training data based on xp type

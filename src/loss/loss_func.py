@@ -73,11 +73,14 @@ def fourier_loss(outputs, inputs, depth_dim=1):
 
 
 def error_treshold_based_mse_loss(inputs, outputs, max_value_threshold=3.0):
-    mask = torch.abs(inputs-outputs) > max_value_threshold
-    masked_inputs = inputs[mask]
-    masked_outputs = outputs[mask]
-    mse_loss = nn.MSELoss()(masked_outputs, masked_inputs)
-    return mse_loss
+    mask = (torch.abs(inputs - outputs) > max_value_threshold).float()
+    diff = (inputs - outputs)**2
+    # Only keep differences for masked elements
+    masked_diff = diff * mask
+    sse = masked_diff.sum()
+    n = mask.sum()
+    mse = sse / (n + 1e-8)
+    return mse
 
 
 
@@ -153,8 +156,8 @@ def f1_score(min_max_idx_truth, min_max_idx_ae, dim=1):
         ae_expanded = F.conv1d(min_max_idx_ae.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
     elif min_max_idx_truth.ndim == 4:
         # Expand the truth tensor with the kernel for 4D inputs
-        truth_expanded = F.conv3d(min_max_idx_truth.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0).unsqueeze(0), padding='same').squeeze()
-        ae_expanded = F.conv3d(min_max_idx_ae.unsqueeze(0).unsqueeze(0).unsqueeze(0), kernel.unsqueeze(0).unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+        truth_expanded = F.conv3d(min_max_idx_truth.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
+        ae_expanded = F.conv3d(min_max_idx_ae.unsqueeze(1), kernel.unsqueeze(0).unsqueeze(0), padding='same').squeeze()
     else:
         raise ValueError("Unsupported input dimensions")
 

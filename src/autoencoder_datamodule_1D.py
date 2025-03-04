@@ -173,6 +173,7 @@ class AutoEncoderDatamodule_1D(pl.LightningDataModule):
             self.val_ds = AE_BaseDataset_3D(self.val_da)
 
         if stage == 'test':
+            self.test_shape = self.test_da.data.shape
             self.test_ds = AE_BaseDataset_3D(self.test_da)
             
 
@@ -190,12 +191,9 @@ class AutoEncoderDatamodule_1D(pl.LightningDataModule):
             self.norm_stats["params"]["mean"] = np.nanmean(train_arr)
             self.norm_stats["params"]["std"] = np.nanstd(train_arr)
         elif self.norm_stats.method == "mean_std_along_depth":
-            if self.depth_pre_treatment["norm_on"] == "components":
-                self.norm_stats["params"]["mean"] = np.nanmean(train_arr, axis=0).reshape(1, -1, 1, 1)
-                self.norm_stats["params"]["std"] = np.nanstd(train_arr, axis=0).reshape(1, -1, 1, 1)
-            else:
-                self.norm_stats["params"]["mean"] = np.nanmean(train_arr, axis=(0, 2, 3)).reshape(1, -1, 1, 1)
-                self.norm_stats["params"]["std"] = np.nanstd(train_arr, axis=(0, 2, 3)).reshape(1, -1, 1, 1)
+
+            self.norm_stats["params"]["mean"] = np.nanmean(train_arr, axis=1).reshape(1, -1)
+            self.norm_stats["params"]["std"] = np.nanstd(train_arr, axis=1).reshape(1, -1)
         elif self.norm_stats.method == "min_max":
             self.norm_stats["params"]["x_min"] = np.nanmin(train_arr)
             self.norm_stats["params"]["x_max"] = np.nanmax(train_arr)

@@ -93,6 +93,8 @@ class AE_Dense(nn.Module):
         if self.norm_layer is not None:
             x = self.norm_layer(x)
         x_enc = self.encoder(x)
+        self.bottleneck_shape = x_enc.shape
+        self.cr = self.input_features / x_enc.shape[-1]
         x_dec = self.decoder(x_enc)
         # Optionally, if unnorm_layer is not None, apply unnormalization here.
         if self.unnorm_layer is not None:

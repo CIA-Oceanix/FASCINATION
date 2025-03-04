@@ -73,6 +73,7 @@ class AE_CNN(nn.Module):
 
         if dense:
             self.pool_str = (2,2,1)
+            self.channels_list[0] = self.input_shape[1]
         elif pooling_dim == "all":
             self.pool_str = (2,2,2)
         elif pooling_dim == "depth":
@@ -106,6 +107,7 @@ class AE_CNN(nn.Module):
             "Tanh": nn.Tanh(),
             "Softmax": nn.Softmax(dim=1),
             "Relu": nn.ReLU(),
+            "LeakyRelu": nn.LeakyReLU(),
             "Elu": nn.ELU(),
             "Gelu": nn.GELU(),
             "None": nn.Identity()
