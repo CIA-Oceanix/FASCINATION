@@ -1,4 +1,3 @@
-
 import xarray as xr
 import os
 import hydra
@@ -11,10 +10,13 @@ from pathlib import Path
 import torch
 import numpy as np
 from omegaconf import DictConfig
-import src.differentiable_fonc as DF
-import src.activation_function as AF
+import FASCINATION.src.differentiable_fonc as DF
+import FASCINATION.src.activation_function as AF
 import os 
 import sys
+from scipy.interpolate import interp1d
+from scipy.ndimage import convolve
+from pytorch_msssim import ms_ssim
 
 running_path = "/Odyssey/private/o23gauvr/code/FASCINATION/"
 os.chdir(running_path)
@@ -23,7 +25,12 @@ sys.path.insert(0,running_path)
 
 def load_ssp_da(ssf_da_path):
     
-    return xr.open_dataarray(ssf_da_path)
+    return(xr.open_dataarray(ssf_da_path))
+
+
+
+
+        
 
 
 def load_ssf_ecs_da(ssf_da_path, ecs_da_path):
@@ -360,6 +367,55 @@ def check_abnormal_grad(model, writter, verbose=True, raise_error=False):
         #         print(f"input gradient mean is nan")
         #     elif raise_error:
         #         raise RuntimeError(f"input gradient mean is nan")
+
+def get_min_max_idx(arr, axs=1, pad=True):
+    grad = np.diff(arr, axis=axs)
+    grad_sign = np.sign(grad)
+    min_max = np.diff(grad_sign, axis=axs)
+    min_max = np.abs(np.sign(min_max))
+    if pad:
+        min_max = np.pad(min_max, ((0, 0), (1, 1), (0, 0), (0, 0)), 'constant', constant_values=1)
+    return min_max
+
+def get_f1_score(min_max_idx_truth, min_max_idx_ae, axs=1, kernel_size=10):
+    kernel_shape = [1] * min_max_idx_truth.ndim
+    kernel_shape[axs] = kernel_size
+    kernel = np.ones(kernel_shape)
+    truth_expanded = convolve(min_max_idx_truth, kernel, mode='constant', cval=0.0)
+    ae_expanded = convolve(min_max_idx_ae, kernel, mode='constant', cval=0.0)
+    true_positives = (truth_expanded > 0) & (min_max_idx_ae > 0)
+    num_true_positives = np.sum(true_positives, axis=axs)
+    false_positives = (truth_expanded == 0) & (min_max_idx_ae > 0)
+    num_false_positives = np.sum(false_positives, axis=axs)
+    false_negatives = (min_max_idx_truth > 0) & (ae_expanded == 0)
+    num_false_negatives = np.sum(false_negatives, axis=axs)
+    precision_den = num_true_positives + num_false_positives
+    recall_den = num_true_positives + num_false_negatives
+    precision_score = np.where(precision_den == 0, 0, num_true_positives / precision_den)
+    recall_score = np.where(recall_den == 0, 0, num_true_positives / recall_den)
+    sum_scores = precision_score + recall_score
+    f1_score = np.where(sum_scores == 0, 0, 2 * (precision_score * recall_score) / sum_scores)
+    return f1_score
+
+def cubic_interpolate_along_axis(arr: np.ndarray, target_size: int, axis: int) -> np.ndarray:
+    original_shape = arr.shape
+    current_size = arr.shape[axis]
+    x_old = np.linspace(0, 1, current_size)
+    x_new = np.linspace(0, 1, target_size)
+    arr_swapped = np.moveaxis(arr, axis, 0)
+    reshaped = arr_swapped.reshape(current_size, -1)
+    f = interp1d(x_old, reshaped, kind='cubic', axis=0, bounds_error=False, fill_value="extrapolate")
+    interpolated = f(x_new)
+    new_shape = (target_size,) + arr_swapped.shape[1:]
+    interpolated = interpolated.reshape(new_shape)
+    return np.moveaxis(interpolated, 0, axis)
+
+def compute_psnr(a, b):
+    mse = np.mean((a - b) ** 2)
+    return -10 * np.log10(mse)
+
+def compute_msssim(a, b):
+    return ms_ssim(a, b, data_range=1.).item()
 
 if __name__ == "__main__":
 

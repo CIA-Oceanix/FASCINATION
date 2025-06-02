@@ -18,7 +18,7 @@ echo "Environment activated successfully."
 declare -a xp="autoencoder_V2"
 declare -a model="AE_CNN"
 
-declare -a features_list=([5000,3000,1000,1] [5000,3000,1000,2] [5000,3000,1000,3] [5000,3000,1000,4]) #[5000,2500,2] # [1,2,4,8]
+declare -a features_list=([5000,4]) #[5000,2500,2] # [1,2,4,8]
 declare -a loss_weights_list=("1,1,0,0,0,0,0,0,0,0")
 
 
@@ -27,7 +27,7 @@ declare -a lr=1e-3
 declare -a dense=True
 declare -a kernel_list=3
 declare -a profile_ratio=null
-declare -a pooling="None"
+declare -a pooling="Avg"
 declare -a n_conv_per_layer=1
 declare -a manage_nan="supress_with_max_depth"
 

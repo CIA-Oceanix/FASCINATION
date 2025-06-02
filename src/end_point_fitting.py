@@ -6,7 +6,7 @@ sys.path.insert(0,running_path)
 os.chdir(running_path)
 
 import numpy as np
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, interp1d
 import torch
 import torch.nn as nn
 from omegaconf import OmegaConf
@@ -26,7 +26,11 @@ class NoConvAE(nn.Module):
         super().__init__()  
 
         self.pooling_dim = pooling_dim
-        self.upsample_mode = "trilinear"
+
+        if pooling_dim == "all":
+            self.upsample_mode = "linear"
+        elif pooling_dim == "spatial":
+            self.upsample_mode = "trilinear"
 
 
         if pooling_dim == "all":
@@ -58,7 +62,10 @@ class NoConvAE(nn.Module):
     
         self.decoder = nn.Sequential(*[upsample_layer for i in range(n-1)])
 
-        self.decoder.append(nn.Upsample(size=None, mode=self.upsample_mode))
+        if n > 0:
+            self.decoder.append(nn.Upsample(size=None, mode=self.upsample_mode))
+        else:
+            self.decoder.append(nn.Identity())
 
     
     def forward(self,x):
@@ -109,7 +116,6 @@ def get_interpolation_points_idx(min_max_mask, axis=1, reduction_rank=1):
             new_indices.extend(interp_points.astype(int))
         new_indices.append(reduced_indices[-1])
         reduced_indices = np.unique(new_indices)
-    
 
     
     return reduced_indices
@@ -165,21 +171,33 @@ if __name__ == "__main__":
     xp="autoencoder_V2" #autoencoder_V2 #dense_ae
     pooling_dim = "spatial" if xp == "autoencoder_V2" else "all"
 
-    max_reducation_range = 10 
+    max_reduction_rank = 10
     n_layers = 10
-    gpu = 0
+    interpolation = "linear" #linear #cubic
+    test_n_profiles = 100000 
+
+
+    gpu=0
+    device = torch.device(f"cuda:{gpu}" if (torch.cuda.is_available() and gpu is not None) else "cpu")
     
     cfg_path = f"config/xp/{xp}.yaml"
     cfg = OmegaConf.load(cfg_path)
 
-
     print("Inititing datamodule; Generating train and test datasets")
+
+    #profile_ratio = 0.00001
+    #cfg.datamodule.profile_ratio = profile_ratio
+
+    cfg.datamodule.n_profiles = 10*test_n_profiles
+
+
 
     dm = hydra.utils.call(cfg.datamodule)
 
     test_ssp_arr, dm = loading_datamodule_phase(dm)
 
-    input_size = test_ssp_arr.size
+    input_size = test_ssp_arr.nbytes
+    input_shape = test_ssp_arr.shape
 
 
     if  dm.norm_stats["norm_location"] == "datamodule":
@@ -219,28 +237,60 @@ if __name__ == "__main__":
         rmse_dict["cr"][f"Pool_upsample_{n}_layers"] = {}
 
     
-    for i in tqdm(range(max_reducation_range), unit = "reduction rank", desc = "Computing end point fitting", disable = not(verbose)):
 
-        for n_layer in tqdm(range(n_layers),disable=not(verbose), unit = "layers", desc = "Computing AE layers"): 
-            
-            
-            pooling_model = NoConvAE(n_layer, pooling_dim=pooling_dim, pooling_mode="Avg")
+    for n_layer in tqdm(range(n_layers),disable=not(verbose), unit = "layers", desc = "Computing AE layers"): 
 
-            min_max_idx = get_min_max_idx(test_ssp_arr, axs=1, pad=True)
+        pooling_model = NoConvAE(n_layer, pooling_dim=pooling_dim, pooling_mode="Avg")
+        pooling_model.decoder[-1].size = input_shape[1:]
 
-            reduced_indices = get_interpolation_points_idx(min_max_idx, axis=1, reduction_rank=i)
+        test_ssp_tens = torch.tensor(test_ssp_arr).to(device)
 
-            interpolated_points = np.take(test_ssp_arr, reduced_indices, axis=1)
+        pooled_ssp_arr = pooling_model.encoder(test_ssp_tens.unsqueeze(1)).squeeze(1).detach().cpu().numpy()
 
-            interpolated_points_tens = torch.tensor(interpolated_points)
+        pooled_shape = pooled_ssp_arr.shape
 
-            pooled_upsampled_interpolated_points = pooling_model(interpolated_points_tens).detach().numpy()
+        if pooling_dim == "all":
+            flatten_pooled_ssp_arr = pooled_ssp_arr.transpose(1,0).reshape(-1,input_shape[1])
+        elif pooling_dim == "spatial":
+            flatten_pooled_ssp_arr = pooled_ssp_arr.transpose(0,2,3,1).reshape(-1,input_shape[1])
 
-            cr = input_size/pooling_model.bottleneck.numel()
+        min_max_idx = get_min_max_idx(flatten_pooled_ssp_arr, axs=1, pad=True)
 
-            interpolator = CubicSpline(reduced_indices, pooled_upsampled_interpolated_points, axis=1)
 
-            interpolated_ssp_arr = interpolator(np.arange(test_ssp_arr.shape[1]))
+        for reduction_rank in tqdm(range(max_reduction_rank), unit = "reduction rank", desc = "Computing end point fitting", disable = not(verbose)):
+ 
+            interpolation_idx_list = []
+            interpolation_values_list = []
+            compressed_size = 0
+
+            interpolated_output = np.zeros(flatten_pooled_ssp_arr.shape)
+
+            for i,idx in enumerate(tqdm(min_max_idx, unit = "signals", desc = "Interpolating")):
+                interpolation_pts_idx = get_interpolation_points_idx(idx, reduction_rank=reduction_rank,axis=0).astype(np.int16)
+                #interpolation_idx_list.append(interpolation_pts_idx) 
+                reduced_signal = flatten_pooled_ssp_arr[i][interpolation_pts_idx]
+                interpolation_values_list.append(reduced_signal)
+                #n_elements = n_elements + 2*len(interpolation_pts_idx)
+                compressed_size = compressed_size + reduced_signal.nbytes + interpolation_pts_idx.nbytes
+                
+                if interpolation == "linear":
+                    interpolator = interp1d(interpolation_pts_idx, reduced_signal, kind='linear', fill_value="extrapolate")
+                elif interpolation == "cubic":
+                    interpolator = CubicSpline(interpolation_pts_idx, reduced_signal)
+                interpolated_signal = interpolator(np.arange(input_shape[1]))
+
+                interpolated_output[i] = interpolated_signal
+
+            if pooling_dim == "all":
+                interpolated_output = interpolated_output.reshape(pooled_shape[1],pooled_shape[0]).transpose(1,0)
+            elif pooling_dim == "spatial":
+                interpolated_output = interpolated_output.reshape(pooled_shape[0],pooled_shape[2],pooled_shape[3],pooled_shape[1]).transpose(0,3,1,2)
+
+            interpolated_values_tens = torch.tensor(interpolated_output)
+
+            interpolated_ssp_arr = pooling_model.decoder(interpolated_values_tens.unsqueeze(1)).squeeze(1).detach().cpu().numpy()
+
+            cr = input_size/compressed_size
 
 
             ssp_rmse = np.sqrt(np.mean((test_ssp_arr - interpolated_ssp_arr) ** 2))
@@ -250,19 +300,20 @@ if __name__ == "__main__":
 
             ecs_rmse = np.sqrt(np.mean((ecs_truth - ecs_interpolated) ** 2))        
 
-            min_max_idx_interpolated = get_min_max_idx(interpolated_ssp_arr, axis =1, pad=False)
+            min_max_idx_interpolated = get_min_max_idx(interpolated_ssp_arr, axs=1, pad=False)
             mean_number_error_min_max = np.mean(np.abs(np.sum(min_max_idx_truth,axis=1) - np.sum(min_max_idx_interpolated,axis=1)))
 
             F1_score = get_f1_score(min_max_idx_truth, min_max_idx_interpolated, axs=1, kernel_size=10)
+            f1_score = np.mean(F1_score)
 
 
-            rmse_dict["SSP"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{i}"] = ssp_rmse
-            rmse_dict["ECS"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{i}"] = ecs_rmse
-            rmse_dict["mean_error_n_min_max"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{i}"] = mean_number_error_min_max
-            rmse_dict["F1_score"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{i}"] = F1_score
-            rmse_dict["cr"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{i}"] = cr
+            rmse_dict["SSP"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{reduction_rank}"] = ssp_rmse
+            rmse_dict["ECS"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{reduction_rank}"] = ecs_rmse
+            rmse_dict["mean_error_n_min_max"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{reduction_rank}"] = mean_number_error_min_max
+            rmse_dict["F1_score"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{reduction_rank}"] = f1_score
+            rmse_dict["cr"][f"Pool_upsample_{n_layer}_layers"][f"reduction_rank_{reduction_rank}"] = cr
 
 
 
-    with open(f'pickle/rmse_pca_all_components_with_pooling_upsampling_unorm_xp_{xp}.pkl', 'wb') as f:
+    with open(f'pickle/rmse_end_point_fitting_xp_{xp}_profile_ratio_{test_n_profiles}_interp_{interpolation}.pkl', 'wb') as f:
         pickle.dump(rmse_dict, f)

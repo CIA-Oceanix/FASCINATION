@@ -1,5 +1,9 @@
-import pytorch_lightning as pl
+import sys
+from pathlib import Path
+#sys.path.append("/Odyssey/private/o23gauvr/code/MLIC/MLIC/models")
 
+import pytorch_lightning as pl
+import warnings
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,6 +13,10 @@ import torch.nn.functional as F
 #from src.model.autoencoder.AE_CNN_3D import AE_CNN_3D
 from src.model.autoencoder.AE_CNN import AE_CNN
 from src.model.autoencoder.AE_Dense import AE_Dense
+from src.model.autoencoder.Cheng2020Anchor import Cheng2020Anchor
+
+# sys.path.append(str(Path("/Odyssey/private/o23gauvr/code/MLIC/MLIC/")))
+# from models import MLICPlusPlus # type: ignore
 #from src.model.autoencoder.AE_CNN_pool_2D import AE_CNN_pool_2D
 #from src.model.autoencoder.AE_CNN_1D import AE_CNN_1D
 from src.utils import check_differentiable, check_abnormal_grad
@@ -30,7 +38,7 @@ class AutoEncoder(pl.LightningModule):
     
         super().__init__()
         
-        self.model_dict = dict(AE_CNN = AE_CNN,  AE_Dense=AE_Dense) #AE_CNN_3D = AE_CNN_3D, #AE_CNN_2D = AE_CNN_2D, AE_CNN_pool_2D  = AE_CNN_pool_2D, AE_CNN_1D = AE_CNN_1D #Dense_CNN_with_classif_3D = Dense_CNN_with_classif_3D
+        self.model_dict = dict(AE_CNN = AE_CNN,  AE_Dense=AE_Dense, Cheng2020Anchor=Cheng2020Anchor) # MLICPlusPlus=MLICPlusPlus #AE_CNN_3D = AE_CNN_3D, #AE_CNN_2D = AE_CNN_2D, AE_CNN_pool_2D  = AE_CNN_pool_2D, AE_CNN_1D = AE_CNN_1D #Dense_CNN_with_classif_3D = Dense_CNN_with_classif_3D
         self.verbose = False
 
         self.loss_weight = loss_weight
@@ -70,18 +78,20 @@ class AutoEncoder(pl.LightningModule):
         
         if stage == 'fit':
             
-            # If using AE_Dense, pass norm_stats to the model (if supported)
-            self.initiate_model(self.model_name, self.model_hparams, batch)
-            # For AE_Dense update its norm layers if norm_location is "AE"
+            # if self.model_name == "MLICPlusPlus":
+            #     self.model_AE = MLICPlusPlus(config=self.model_hparams)
+            # else:
+                # Existing AutoEncoder initialization
+            self.model_AE = self.initiate_model(self.model_name, self.model_hparams)
 
 
             #self.set_last_activation_function()
-            self.encoder, self.decoder = self.model_AE.encoder, self.model_AE.decoder
+            #self.encoder, self.decoder = self.model_AE.encoder, self.model_AE.decoder
 
-            check_differentiable(batch, self, verbose=False, raise_error=True)
+            #TODO: put back the check_differentiable 
+            warnings.warn("Reminder: put back the check_differentiable function call before finalizing.", UserWarning)
 
-
-
+            #check_differentiable(batch, self, verbose=False, raise_error=True)
 
         self.max_significant_depth = 200
 
@@ -319,8 +329,9 @@ class AutoEncoder(pl.LightningModule):
 
     def initiate_model(self,model_name, model_hparams, batch=None):
 
+        #if 'input_shape' in self.model_hparams:
         self.model_hparams['input_shape'] = batch.shape
-
+        
         if model_name in self.model_dict:
             self.model_AE = self.model_dict[model_name](**model_hparams)
         else:
@@ -366,7 +377,7 @@ class AutoEncoder(pl.LightningModule):
         else:
             self.model_AE.decoder.net[-1] = act_fn_dict.get(self.specific_last_act_fn, nn.Identity())
 
-         
+    
 
     def unorm(self, ssp_tens):
 
