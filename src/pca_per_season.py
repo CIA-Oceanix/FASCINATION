@@ -54,17 +54,41 @@ def main():
     explained_variance_thresholds = [0.5, 0.8, 0.9, 0.95, 0.98, 0.99, 0.999] #  0.9, 0.95, 0.98, 0.99, 0.999
     season_metrics = {}
 
-    pca_types = ["depth", "spatial", "time"] #"time"
+    pca_types = ["depth", "spatial", "time"] #"time" #
     pca_combinations = []
-    for i in range(1, 3):
+    for i in range(1, 4):
         pca_combinations.extend(combinations(pca_types, i))
 
-    for season in tqdm([ "all",  "spring", "summer", "autumn", "winter"], desc="Processing seasons", unit="season"): #   ,
+    for season in tqdm(["all", "spring", "summer", "autumn", "winter"], desc="Processing seasons", unit="season"): #   "all", ,
         print(f"\nProcessing season: {season}")
 
         if season == "all":
-            da_natl_season = da_natl.dropna(dim="time")
-            da_enatl_season = da_enatl.dropna(dim="time")
+            # Extract month and day for each time point
+            natl_month_day = pd.DataFrame({
+                "month": da_natl['time.month'].values,
+                "day": da_natl['time.day'].values
+            })
+            enatl_month_day = pd.DataFrame({
+                "month": da_enatl['time.month'].values,
+                "day": da_enatl['time.day'].values
+            })
+
+            # Find common (month, day) pairs
+            natl_md_set = set(tuple(x) for x in natl_month_day.values)
+            enatl_md_set = set(tuple(x) for x in enatl_month_day.values)
+            common_md = np.array(list(natl_md_set & enatl_md_set))
+
+            # If there are fewer than 90, use all; else, sample 90
+            n_sample = min(90, len(common_md))
+            rng = np.random.default_rng(seed=42)
+            selected_md = common_md[rng.choice(len(common_md), n_sample, replace=False)]
+
+            # Get indices for natl and enatl matching the selected (month, day)
+            natl_idx = natl_month_day.apply(lambda row: any((row["month"] == md[0]) and (row["day"] == md[1]) for md in selected_md), axis=1)
+            enatl_idx = enatl_month_day.apply(lambda row: any((row["month"] == md[0]) and (row["day"] == md[1]) for md in selected_md), axis=1)
+
+            da_natl_season = da_natl.isel(time=np.where(natl_idx)[0]).dropna(dim="time")
+            da_enatl_season = da_enatl.isel(time=np.where(enatl_idx)[0]).dropna(dim="time")
         else:
             da_natl_season = da_natl.sel(time=da_natl['season'] == season).dropna(dim="time")
             da_enatl_season = da_enatl.sel(time=da_enatl['season'] == season).dropna(dim="time")
