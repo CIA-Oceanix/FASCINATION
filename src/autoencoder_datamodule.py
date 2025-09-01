@@ -13,7 +13,7 @@ TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
 
 class AutoEncoderDatamodule_3D(pl.LightningDataModule):
     
-    def __init__(self, input_da, dl_kw, norm_stats, pooled_dim:str, depth_pre_treatment: dict, manage_nan: str = "suppress", n_profiles: int = None, reshape=None, dtype_str = 'float32'):
+    def __init__(self, input_da, dl_kw, norm_stats, pooled_dim:str=None, depth_pre_treatment: dict={}, manage_nan: str = "suppress", n_profiles: int = None, reshape=None, dtype_str = 'float32'):
         super().__init__()
         self.input = input_da
         self.dl_kw = dl_kw
@@ -36,7 +36,7 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
         self.dtype_str = dtype_str
         self.coords = input_da.coords
         self.depth_array = self.coords["z"].data
-        self.input_shape = input_da.data.shape
+        self.input_shape = input_da.shape
         self.train_ds = None
         self.val_ds = None
         self.test_ds = None
@@ -90,8 +90,8 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
                 closest_lat_size = n_lat * 64
                 n_lon = int(np.ceil(lon_size / 64))
                 closest_lon_size = n_lon * 64
-                new_lat = np.linspace(self.input.lat.min(), self.input.lat.max(), closest_lat_size)
-                new_lon = np.linspace(self.input.lon.min(), self.input.lon.max(), closest_lon_size)
+                new_lat = np.linspace(self.input.lat.min().item(), self.input.lat.max().item(), closest_lat_size)
+                new_lon = np.linspace(self.input.lon.min().item(), self.input.lon.max().item(), closest_lon_size)
                 self.input = self.input.interp(lat=new_lat, lon=new_lon, method="cubic")
 
 
@@ -139,7 +139,7 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
             self.train_shape = self.input.isel(time=self.train_time_idx).shape
             self.test_shape = self.input.isel(time=self.test_time_idx).shape
 
-            if self.depth_pre_treatment["method"] == "pca":
+            if self.depth_pre_treatment.get("method") == "pca":
                 if self.depth_pre_treatment["norm_on"] == "components":
                     input_shape = self.input.shape
                     n_components = self.depth_pre_treatment["params"]
@@ -150,7 +150,7 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
                     data = pca.transform(self.input.data.transpose(0, 2, 3, 1).reshape(-1, input_shape[1])).reshape(input_shape[0], input_shape[2], input_shape[3], n_components).transpose(0, 3, 1, 2)
             else:
                 data = self.input.data
-                if any(param is None for param in self.norm_stats['params'].values()):
+                if 'params' not in self.norm_stats or self.norm_stats['params'] is None or any(param is None for param in self.norm_stats['params'].values()):
                     self.get_train_norm_stats(train_data_array)
 
             if self.norm_stats["method"] == "min_max":
@@ -166,7 +166,7 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
                 std = self.norm_stats["params"]["std"]
                 data = (data - mean) / std
 
-            if self.depth_pre_treatment["method"] == "pca":
+            if self.depth_pre_treatment.get("method") == "pca":
                 if self.depth_pre_treatment["norm_on"] == "profiles":
                     input_shape = self.input.shape
                     n_components = self.depth_pre_treatment["params"]
@@ -183,7 +183,7 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
             self.max_val = self.input.data.max()
 
 
-            if self.depth_pre_treatment["method"] == "pca":
+            if self.depth_pre_treatment.get("method") == "pca":
                 self.drop_last_batch = True
 
             self.is_data_normed = True
@@ -218,11 +218,12 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
         return torch.utils.data.DataLoader(self.test_ds, shuffle=False, drop_last=self.drop_last_batch, **self.dl_kw)
 
     def get_train_norm_stats(self, train_arr: np.array, verbose=False):
+        self.norm_stats["params"] = {}
         if self.norm_stats['method'] == "mean_std":
             self.norm_stats["params"]["mean"] = np.nanmean(train_arr)
             self.norm_stats["params"]["std"] = np.nanstd(train_arr)
         elif self.norm_stats['method'] == "mean_std_along_depth":
-            if self.depth_pre_treatment["norm_on"] == "components":
+            if self.depth_pre_treatment.get("norm_on") == "components":
                 self.norm_stats["params"]["mean"] = np.nanmean(train_arr, axis=0).reshape(1, -1, 1, 1)
                 self.norm_stats["params"]["std"] = np.nanstd(train_arr, axis=0).reshape(1, -1, 1, 1)
             else:

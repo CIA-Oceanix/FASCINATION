@@ -95,12 +95,12 @@ class AutoEncoder(pl.LightningModule):
 
         self.max_significant_depth = 200
 
-        if self.depth_pre_treatment["method"] == "pca":
+        if self.depth_pre_treatment.get("method") == "pca":
             tens_shape = torch.Size([batch.shape[0], len(self.depth_arr), *batch.shape[2:]])
-            pca = self.depth_pre_treatment["fitted_pca"]
+            pca = self.depth_pre_treatment.get("fitted_pca")
             self.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=tens_shape ,device=batch.device,dtype=batch.dtype)     
             
-            if self.depth_pre_treatment["train_on"] == "components":
+            if self.depth_pre_treatment.get("train_on") == "components":
                 variance_to_explain = 0.95
                 cumsum_explained_variance_ratio = np.cumsum(pca.explained_variance_ratio_)
                 self.max_significant_depth = np.argmax(cumsum_explained_variance_ratio >= variance_to_explain) + 1
@@ -117,7 +117,7 @@ class AutoEncoder(pl.LightningModule):
         
     def forward(self, x):
 
-        if self.depth_pre_treatment["method"] == "pca":
+        if self.depth_pre_treatment.get("method") == "pca":
 
             x = self.dif_pca_4D.transform(x)
 
@@ -128,7 +128,7 @@ class AutoEncoder(pl.LightningModule):
         x_hat = self.model_AE(x)
 
 
-        if self.depth_pre_treatment["method"] == "pca": 
+        if self.depth_pre_treatment.get("method") == "pca": 
             x_hat = self.dif_pca_4D.inverse_transform(x_hat)
             
 
@@ -162,7 +162,7 @@ class AutoEncoder(pl.LightningModule):
             treshold_loss = error_treshold_based_mse_loss(ssp_truth, ssp_reconstructed, max_value_threshold=3.0)
             max_value_loss, max_position_loss = max_position_and_value_loss(ssp_truth, ssp_reconstructed)
             # For non-PCA branch compute additional losses
-            if not (self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment.get("train_on") == "components"):
+            if not (self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components"):
                 gradient_loss = gradient_mse_loss(ssp_truth, ssp_reconstructed, self.z_tens)
                 min_max_pos_loss, min_max_value_loss = min_max_position_and_value_loss(ssp_truth, ssp_reconstructed)
                 fft_loss = fourier_loss(ssp_reconstructed, ssp_truth)
@@ -232,7 +232,7 @@ class AutoEncoder(pl.LightningModule):
         ssp_truth = batch   
         ssp_reconstructed = self(ssp_truth)
 
-        if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
+        if self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components":
             ssp_truth = self.dif_pca_4D.transform(ssp_truth)
             ssp_reconstructed = self.dif_pca_4D.transform(ssp_reconstructed)
 
@@ -256,7 +256,7 @@ class AutoEncoder(pl.LightningModule):
         + self.normalized_loss_weight['max_position_weight'] * max_position_loss \
         + self.normalized_loss_weight['max_value_weight'] * max_value_loss
 
-        if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
+        if self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components":
 
             pass
 
@@ -280,7 +280,7 @@ class AutoEncoder(pl.LightningModule):
         
         if phase == "test":
         
-            if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
+            if self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components":
                 ssp_truth = self.dif_pca_4D.inverse_transform(ssp_truth)
                 ssp_reconstructed = self.dif_pca_4D.inverse_transform(ssp_reconstructed)
 
@@ -382,7 +382,7 @@ class AutoEncoder(pl.LightningModule):
     def unorm(self, ssp_tens):
 
 
-        if self.depth_pre_treatment["norm_on"] == "components":
+        if self.depth_pre_treatment.get("norm_on") == "components":
             ssp_tens = self.dif_pca_4D.transform(ssp_tens)
 
         if self.norm_stats["method"] == "min_max":
@@ -397,7 +397,7 @@ class AutoEncoder(pl.LightningModule):
             mean, std = torch.tensor(self.norm_stats["params"]["mean"].reshape(1,-1,1,1), device = ssp_tens.device, dtype=ssp_tens.dtype),torch.tensor(self.norm_stats["params"]["std"].reshape(1,-1,1,1), device = ssp_tens.device, dtype=ssp_tens.dtype)
             ssp_tens = ssp_tens*std + mean
 
-        if self.depth_pre_treatment["norm_on"] == "components": 
+        if self.depth_pre_treatment.get("norm_on") == "components": 
             ssp_tens = self.dif_pca_4D.inverse_transform(ssp_tens)
 
     

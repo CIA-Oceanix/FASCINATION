@@ -1,7 +1,7 @@
 import sys
 import os
 
-running_path = "/Odyssey/private/o23gauvr/code/FASCINATION/"
+running_path = "/Odyssey/private/o23gauvr/code/"
 sys.path.insert(0,running_path)
 os.chdir(running_path)
 
@@ -9,13 +9,15 @@ import os
 import glymur
 import numpy as np
 from scipy.ndimage import convolve
+from scipy.interpolate import interp1d
 from tqdm import tqdm
 import pickle
 import torch.nn as nn
 import torch
 import hydra
 from omegaconf import OmegaConf
-from src.utils import loading_datamodule_phase, unorm_ssp_arr_3D
+from FASCINATION.src.utils import loading_datamodule_phase, unorm_ssp_arr_3D
+from pytorch_msssim import ms_ssim
 import tempfile
 
 
@@ -100,6 +102,56 @@ def get_min_max_idx(arr,axs=1, pad=True):
         min_max = np.pad(min_max, pad_width, 'constant', constant_values=1)
     return min_max
 
+
+
+def cubic_interpolate_along_axis(arr: np.ndarray, target_size: int, axis: int) -> np.ndarray:
+    """Cubic interpolation along a specific axis"""
+    from scipy.interpolate import interp1d
+    current_size = arr.shape[axis]
+    x_old = np.linspace(0, 1, current_size)
+    x_new = np.linspace(0, 1, target_size)
+    arr_swapped = np.moveaxis(arr, axis, 0)
+    reshaped = arr_swapped.reshape(current_size, -1)
+    f = interp1d(x_old, reshaped, kind='cubic', axis=0, bounds_error=False, fill_value="extrapolate")
+    interpolated = f(x_new)
+    new_shape = (target_size,) + arr_swapped.shape[1:]
+    interpolated = interpolated.reshape(new_shape)
+    return np.moveaxis(interpolated, 0, axis)
+
+def compute_psnr(a, b):
+    """Compute Peak Signal-to-Noise Ratio"""
+    mse = np.mean((a - b) ** 2)
+    if mse == 0:
+        return float('inf')
+    return -10 * np.log10(mse)
+
+def compute_msssim(a, b):
+    """Compute Multi-Scale Structural Similarity"""
+    a_tensor = torch.tensor(a, dtype=torch.float32)
+    b_tensor = torch.tensor(b, dtype=torch.float32)
+    return ms_ssim(a_tensor, b_tensor, data_range=1.).item()
+
+def calculate_confusion_matrix_and_f1_score(min_max_idx_truth, min_max_idx_jpeg, axs=1, kernel_size=7):
+    """Calculate F1 score for min/max detection"""
+    kernel_shape = [1] * min_max_idx_truth.ndim
+    kernel_shape[axs] = kernel_size
+    kernel = np.ones(kernel_shape)
+    
+    truth_expanded = convolve(min_max_idx_truth, kernel, mode='constant', cval=0.0)
+    jpeg_expanded = convolve(min_max_idx_jpeg, kernel, mode='constant', cval=0.0)
+    
+    true_positives = (truth_expanded > 0) & (min_max_idx_jpeg > 0)
+    num_true_positives = np.sum(true_positives)
+    false_positives = (truth_expanded == 0) & (min_max_idx_jpeg > 0)
+    num_false_positives = np.sum(false_positives)
+    false_negatives = (min_max_idx_truth > 0) & (jpeg_expanded == 0)
+    num_false_negatives = np.sum(false_negatives)
+    
+    precision_score = num_true_positives / (num_true_positives + num_false_positives) if (num_true_positives + num_false_positives) > 0 else 0
+    recall_score = num_true_positives / (num_true_positives + num_false_negatives) if (num_true_positives + num_false_negatives) > 0 else 0
+    f1_score = 2 * (precision_score * recall_score) / (precision_score + recall_score) if (precision_score + recall_score) > 0 else 0
+    
+    return f1_score
 
 
 def get_f1_score(min_max_idx_truth, min_max_idx_ae, axs=1, kernel_size=10):
@@ -188,22 +240,8 @@ if __name__ == "__main__":
 
     min_max_idx_truth = get_min_max_idx(test_ssp_arr, pad=False)
 
-
-    rmse_dict = {"SSP":{},
-                "ECS":{},
-                "mean_error_n_min_max":{},
-                "F1_score":{},
-                "cr":{}}
-    
-
-    for n in range(n_layers):
-        rmse_dict["SSP"][f"Pool_upsample_{n}_layers"] = {}
-        rmse_dict["ECS"][f"Pool_upsample_{n}_layers"] = {}
-        rmse_dict["mean_error_n_min_max"][f"Pool_upsample_{n}_layers"] = {}
-        rmse_dict["F1_score"][f"Pool_upsample_{n}_layers"] = {}
-        rmse_dict["cr"][f"Pool_upsample_{n}_layers"] = {}
-
-
+    # Initialize model metrics dictionary like in pca_compo_dict
+    model_metrics = {}
 
     for n_layer in tqdm(range(n_layers),disable=not(verbose), unit = "layers", desc = "Computing AE layers"): 
 
@@ -216,6 +254,17 @@ if __name__ == "__main__":
             pooled_ssp_arr = pooling_model.encoder(test_ssp_tens.unsqueeze(1)).squeeze(1).detach().cpu().numpy()
 
             res = int(np.log(np.min(pooled_ssp_arr.shape))/np.log(2)+1)  #min(6,)
+
+        # Define model name based on pooling layers
+        if n_layer == 0:
+            model_name = "JPEG2000"
+        else:
+            factor = 2 ** n_layer
+            model_name = f"JPEG2000 pooled by factor {factor}x{factor}"
+
+        # Initialize model in metrics dict
+        if model_name not in model_metrics:
+            model_metrics[model_name] = {}
 
         for ratio in tqdm(ratios, desc="Ratios"):
 
@@ -265,31 +314,65 @@ if __name__ == "__main__":
                 decompressed_ssp_tens = torch.tensor(decompressed_ssp_arr).to(device)
                 output_ssp_arr = pooling_model.decoder(decompressed_ssp_tens.unsqueeze(1)).squeeze(1).detach().cpu().numpy()
 
+            # Calculate compression ratio
             cr = input_size / image_size
 
+            # RMSE
             ssp_rmse = np.sqrt(np.mean((test_ssp_arr - output_ssp_arr) ** 2))
 
+            # ECS RMSE
             ecs_interpolated_idx = np.argmax(output_ssp_arr,axis=1)
             ecs_interpolated = depth_array[ecs_interpolated_idx]
-
             ecs_rmse = np.sqrt(np.mean((ecs_truth - ecs_interpolated) ** 2))        
 
+            # MAE
+            mae = np.mean(np.abs(test_ssp_arr - output_ssp_arr))
+
+            # Mean error in number of min/max
             min_max_idx_interpolated = get_min_max_idx(output_ssp_arr, axs=1, pad=False)
             mean_number_error_min_max = np.mean(np.abs(np.sum(min_max_idx_truth,axis=1) - np.sum(min_max_idx_interpolated,axis=1)))
 
-            F1_score = get_f1_score(min_max_idx_truth, min_max_idx_interpolated, axs=1, kernel_size=10)
-            f1_score = np.mean(F1_score)        
+            # F1 score
+            f1_score = calculate_confusion_matrix_and_f1_score(min_max_idx_truth, min_max_idx_interpolated, axs=1, kernel_size=7)
 
-            rmse_dict["SSP"][f"Pool_upsample_{n_layer}_layers"][f"compression ratio {ratio}"] = ssp_rmse
-            rmse_dict["ECS"][f"Pool_upsample_{n_layer}_layers"][f"compression ratio {ratio}"] = ecs_rmse
-            rmse_dict["mean_error_n_min_max"][f"Pool_upsample_{n_layer}_layers"][f"compression ratio {ratio}"] = mean_number_error_min_max
-            rmse_dict["F1_score"][f"Pool_upsample_{n_layer}_layers"][f"compression ratio {ratio}"] = f1_score
-            rmse_dict["cr"][f"Pool_upsample_{n_layer}_layers"][f"compression ratio {ratio}"] = cr
+            # Filtered F1 score (placeholder - set to nan unless specific logic is provided)
+            filtered_f1_score = np.nan
+
+            # R2 score
+            r2_score = 1 - (np.sum((test_ssp_arr - output_ssp_arr) ** 2) / np.sum((test_ssp_arr - np.mean(test_ssp_arr)) ** 2))
+
+            # PSNR
+            psnr = compute_psnr(test_ssp_arr, output_ssp_arr)
+
+            # MS-SSIM (interpolate to 161 along axis=2 like in PCA code)
+            try:
+                arr1 = cubic_interpolate_along_axis(test_ssp_arr, 161, axis=2)
+                arr2 = cubic_interpolate_along_axis(output_ssp_arr, 161, axis=2)
+                msssim = compute_msssim(arr1, arr2)
+            except Exception as e:
+                print(f"MS-SSIM computation failed: {e}")
+                msssim = np.nan
+
+            # Initialize nested dict for this compression ratio
+            if cr not in model_metrics[model_name]:
+                model_metrics[model_name][cr] = {}
+
+            # Store all metrics in the same format as PCA
+            model_metrics[model_name][cr]["RMSE"] = ssp_rmse
+            model_metrics[model_name][cr]["PSNR"] = psnr
+            model_metrics[model_name][cr]["MS-SSIM"] = msssim
+            model_metrics[model_name][cr]["ECS"] = ecs_rmse
+            model_metrics[model_name][cr]["MAE"] = mae
+            model_metrics[model_name][cr]["mean_error_n_min_max"] = mean_number_error_min_max
+            model_metrics[model_name][cr]["F1_score"] = f1_score
+            model_metrics[model_name][cr]["Filtered_F1_score"] = filtered_f1_score
+            model_metrics[model_name][cr]["R2_score"] = r2_score
 
 
 
         
-    with open(f'pickle/rmse_jpeg_2000.pkl', 'wb') as f:
-        pickle.dump(rmse_dict, f)
+    # Save the metrics dictionary in the same format as PCA
+    with open(f'pickle/model_metrics_jpeg2000.pkl', 'wb') as f:
+        pickle.dump(model_metrics, f)
 
     

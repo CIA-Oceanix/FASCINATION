@@ -90,8 +90,8 @@ def model_setup(lit_model,
 
     lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams, batch)
 
-    if lit_model.depth_pre_treatment["method"] == "pca":
-        pca = dm.depth_pre_treatment["fitted_pca"]
+    if lit_model.depth_pre_treatment.get("method") == "pca":
+        pca = dm.depth_pre_treatment.get("fitted_pca")
         lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=batch.shape, device=batch.device, dtype=getattr(torch,dm.dtype_str))     
     
     return lit_model
@@ -209,9 +209,9 @@ def unorm_ssp_arr_3D(ssp_arr:np.array, dm, verbose = False):
     if verbose:
         print(dm.norm_stats.method)
 
-    if dm.depth_pre_treatment['method'] == "pca":
-        if dm.depth_pre_treatment["norm_on"] == "components":
-            pca = dm.depth_pre_treatment["fitted_pca"]
+    if dm.depth_pre_treatment.get('method') == "pca":
+        if dm.depth_pre_treatment.get("norm_on") == "components":
+            pca = dm.depth_pre_treatment.get("fitted_pca")
             ssp_shape = ssp_arr.shape
             ssp_arr = pca.transform(ssp_arr.transpose(0,2,3,1).reshape(-1,ssp_shape[1])).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], pca.n_components).transpose(0,3,1,2)
 
@@ -228,8 +228,8 @@ def unorm_ssp_arr_3D(ssp_arr:np.array, dm, verbose = False):
         x_min,x_max = dm.norm_stats['params']['x_min'],dm.norm_stats['params']['x_max'] #dm.norm_stats['params'].values()
         ssp_unorm_arr =ssp_arr*(x_max-x_min) + x_min
     
-    if dm.depth_pre_treatment['method'] == "pca":
-        if dm.depth_pre_treatment["norm_on"] == "components":
+    if dm.depth_pre_treatment.get('method') == "pca":
+        if dm.depth_pre_treatment.get("norm_on") == "components":
             ssp_unorm_arr = pca.inverse_transform(ssp_unorm_arr.transpose(0,2,3,1).reshape(-1,pca.n_components)).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], len(dm.depth_array)).transpose(0,3,1,2)
 
             
