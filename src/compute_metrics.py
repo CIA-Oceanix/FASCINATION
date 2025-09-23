@@ -542,7 +542,7 @@ def compute_and_save(
 
     # Build data_dict (best/worst selected slices)
     data_dict = {}
-    t, lat, lon = 10, 10, 10
+    t, lat, lon = 15, 101, 81
     metrics_to_check = ['RMSE', 'F1_score', 'ECS', 'R2']
 
     def get_best_worst_random(test_ssp_truth, ae_ssp_test, depth_array, metric_name):
@@ -604,9 +604,9 @@ def compute_and_save(
     # Save outputs
     out_dir = Path(out_pickle_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / 'icaspp_model_metrics.pkl', 'wb') as f:
+    with open(out_dir / 'icaspp_model_metrics_bis.pkl', 'wb') as f:
         pickle.dump(model_metrics, f)
-    with open(out_dir / 'icaspp_data_dict.pkl', 'wb') as f:
+    with open(out_dir / 'icaspp_data_dict_bis.pkl', 'wb') as f:
         pickle.dump(data_dict, f)
     print(f'Saved model_metrics and data_dict to {out_dir}')
 
