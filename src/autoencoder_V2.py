@@ -1,5 +1,9 @@
-import pytorch_lightning as pl
+import sys
+from pathlib import Path
+#sys.path.append("/Odyssey/private/o23gauvr/code/MLIC/MLIC/models")
 
+import pytorch_lightning as pl
+import warnings
 import numpy as np
 import torch
 import torch.nn as nn
@@ -9,6 +13,10 @@ import torch.nn.functional as F
 #from src.model.autoencoder.AE_CNN_3D import AE_CNN_3D
 from src.model.autoencoder.AE_CNN import AE_CNN
 from src.model.autoencoder.AE_Dense import AE_Dense
+from src.model.autoencoder.Cheng2020Anchor import Cheng2020Anchor
+
+# sys.path.append(str(Path("/Odyssey/private/o23gauvr/code/MLIC/MLIC/")))
+# from models import MLICPlusPlus # type: ignore
 #from src.model.autoencoder.AE_CNN_pool_2D import AE_CNN_pool_2D
 #from src.model.autoencoder.AE_CNN_1D import AE_CNN_1D
 from src.utils import check_differentiable, check_abnormal_grad
@@ -30,7 +38,7 @@ class AutoEncoder(pl.LightningModule):
     
         super().__init__()
         
-        self.model_dict = dict(AE_CNN = AE_CNN,  AE_Dense=AE_Dense) #AE_CNN_3D = AE_CNN_3D, #AE_CNN_2D = AE_CNN_2D, AE_CNN_pool_2D  = AE_CNN_pool_2D, AE_CNN_1D = AE_CNN_1D #Dense_CNN_with_classif_3D = Dense_CNN_with_classif_3D
+        self.model_dict = dict(AE_CNN = AE_CNN,  AE_Dense=AE_Dense, Cheng2020Anchor=Cheng2020Anchor) # MLICPlusPlus=MLICPlusPlus #AE_CNN_3D = AE_CNN_3D, #AE_CNN_2D = AE_CNN_2D, AE_CNN_pool_2D  = AE_CNN_pool_2D, AE_CNN_1D = AE_CNN_1D #Dense_CNN_with_classif_3D = Dense_CNN_with_classif_3D
         self.verbose = False
 
         self.loss_weight = loss_weight
@@ -70,27 +78,29 @@ class AutoEncoder(pl.LightningModule):
         
         if stage == 'fit':
             
-            # If using AE_Dense, pass norm_stats to the model (if supported)
-            self.initiate_model(self.model_name, self.model_hparams, batch)
-            # For AE_Dense update its norm layers if norm_location is "AE"
+            # if self.model_name == "MLICPlusPlus":
+            #     self.model_AE = MLICPlusPlus(config=self.model_hparams)
+            # else:
+                # Existing AutoEncoder initialization
+            self.model_AE = self.initiate_model(self.model_name, self.model_hparams)
 
 
             #self.set_last_activation_function()
-            self.encoder, self.decoder = self.model_AE.encoder, self.model_AE.decoder
+            #self.encoder, self.decoder = self.model_AE.encoder, self.model_AE.decoder
 
-            check_differentiable(batch, self, verbose=False, raise_error=True)
+            #TODO: put back the check_differentiable 
+            warnings.warn("Reminder: put back the check_differentiable function call before finalizing.", UserWarning)
 
-
-
+            #check_differentiable(batch, self, verbose=False, raise_error=True)
 
         self.max_significant_depth = 200
 
-        if self.depth_pre_treatment["method"] == "pca":
+        if self.depth_pre_treatment.get("method") == "pca":
             tens_shape = torch.Size([batch.shape[0], len(self.depth_arr), *batch.shape[2:]])
-            pca = self.depth_pre_treatment["fitted_pca"]
+            pca = self.depth_pre_treatment.get("fitted_pca")
             self.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=tens_shape ,device=batch.device,dtype=batch.dtype)     
             
-            if self.depth_pre_treatment["train_on"] == "components":
+            if self.depth_pre_treatment.get("train_on") == "components":
                 variance_to_explain = 0.95
                 cumsum_explained_variance_ratio = np.cumsum(pca.explained_variance_ratio_)
                 self.max_significant_depth = np.argmax(cumsum_explained_variance_ratio >= variance_to_explain) + 1
@@ -107,7 +117,7 @@ class AutoEncoder(pl.LightningModule):
         
     def forward(self, x):
 
-        if self.depth_pre_treatment["method"] == "pca":
+        if self.depth_pre_treatment.get("method") == "pca":
 
             x = self.dif_pca_4D.transform(x)
 
@@ -118,7 +128,7 @@ class AutoEncoder(pl.LightningModule):
         x_hat = self.model_AE(x)
 
 
-        if self.depth_pre_treatment["method"] == "pca": 
+        if self.depth_pre_treatment.get("method") == "pca": 
             x_hat = self.dif_pca_4D.inverse_transform(x_hat)
             
 
@@ -152,7 +162,7 @@ class AutoEncoder(pl.LightningModule):
             treshold_loss = error_treshold_based_mse_loss(ssp_truth, ssp_reconstructed, max_value_threshold=3.0)
             max_value_loss, max_position_loss = max_position_and_value_loss(ssp_truth, ssp_reconstructed)
             # For non-PCA branch compute additional losses
-            if not (self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment.get("train_on") == "components"):
+            if not (self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components"):
                 gradient_loss = gradient_mse_loss(ssp_truth, ssp_reconstructed, self.z_tens)
                 min_max_pos_loss, min_max_value_loss = min_max_position_and_value_loss(ssp_truth, ssp_reconstructed)
                 fft_loss = fourier_loss(ssp_reconstructed, ssp_truth)
@@ -222,7 +232,7 @@ class AutoEncoder(pl.LightningModule):
         ssp_truth = batch   
         ssp_reconstructed = self(ssp_truth)
 
-        if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
+        if self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components":
             ssp_truth = self.dif_pca_4D.transform(ssp_truth)
             ssp_reconstructed = self.dif_pca_4D.transform(ssp_reconstructed)
 
@@ -246,7 +256,7 @@ class AutoEncoder(pl.LightningModule):
         + self.normalized_loss_weight['max_position_weight'] * max_position_loss \
         + self.normalized_loss_weight['max_value_weight'] * max_value_loss
 
-        if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
+        if self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components":
 
             pass
 
@@ -270,7 +280,7 @@ class AutoEncoder(pl.LightningModule):
         
         if phase == "test":
         
-            if self.depth_pre_treatment["method"] == "pca" and self.depth_pre_treatment["train_on"] == "components":
+            if self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components":
                 ssp_truth = self.dif_pca_4D.inverse_transform(ssp_truth)
                 ssp_reconstructed = self.dif_pca_4D.inverse_transform(ssp_reconstructed)
 
@@ -319,8 +329,9 @@ class AutoEncoder(pl.LightningModule):
 
     def initiate_model(self,model_name, model_hparams, batch=None):
 
+        #if 'input_shape' in self.model_hparams:
         self.model_hparams['input_shape'] = batch.shape
-
+        
         if model_name in self.model_dict:
             self.model_AE = self.model_dict[model_name](**model_hparams)
         else:
@@ -366,12 +377,12 @@ class AutoEncoder(pl.LightningModule):
         else:
             self.model_AE.decoder.net[-1] = act_fn_dict.get(self.specific_last_act_fn, nn.Identity())
 
-         
+    
 
     def unorm(self, ssp_tens):
 
 
-        if self.depth_pre_treatment["norm_on"] == "components":
+        if self.depth_pre_treatment.get("norm_on") == "components":
             ssp_tens = self.dif_pca_4D.transform(ssp_tens)
 
         if self.norm_stats["method"] == "min_max":
@@ -386,7 +397,7 @@ class AutoEncoder(pl.LightningModule):
             mean, std = torch.tensor(self.norm_stats["params"]["mean"].reshape(1,-1,1,1), device = ssp_tens.device, dtype=ssp_tens.dtype),torch.tensor(self.norm_stats["params"]["std"].reshape(1,-1,1,1), device = ssp_tens.device, dtype=ssp_tens.dtype)
             ssp_tens = ssp_tens*std + mean
 
-        if self.depth_pre_treatment["norm_on"] == "components": 
+        if self.depth_pre_treatment.get("norm_on") == "components": 
             ssp_tens = self.dif_pca_4D.inverse_transform(ssp_tens)
 
     

@@ -24,9 +24,9 @@ root_save_dir: /Odyssey/private/o23gauvr/code/FASCINATION/outputs #/DATASET/envs
 
 save_dir_name: test #channels_${model.model_hparams.channels_list}
 
-model_architecture: AE_CNN
+model_architecture: MLICPlusPlus #Cheng2020Anchor #AE_CNN
 
-pooled_dim: depth #spatial #depth  #all #None 
+pooled_dim: dense #spatial #depth  #all #None 
 
 patience: 5
 
@@ -36,7 +36,7 @@ trainer:
   accelerator: gpu
   devices: 1
   check_val_every_n_epoch: 1
-  accumulate_grad_batches: 1
+  accumulate_grad_batches: 4
   logger: 
     _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
     save_dir: ${root_save_dir}/${save_dir_name}/AE/  #/DATASET/envs/o23gauvr/outputs/AE_V2/ #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/
@@ -69,11 +69,11 @@ datamodule:
     _target_: src.utils.load_ssp_da
     ssf_da_path: ${paths.sound}
   dl_kw:
-    batch_size: 4
+    batch_size: 1 #4
     num_workers: 2
   norm_stats:
     method: mean_std_along_depth #min_max #mean_std_along_depth #mean_std #mean_std_along_depth #mean_std  #min_max
-    params: ${normalization.${datamodule.norm_stats.method}}
+    params: null #${normalization.${datamodule.norm_stats.method}}
     norm_location: datamodule #datamodule #AE
   manage_nan: supress_with_max_depth
   n_profiles: null #100000
@@ -83,6 +83,7 @@ datamodule:
     params: 10 #10 #none 
     norm_on: components #components #profiles
     train_on: components #components #profiles
+  reshape: null #factor_64 #none #reshape
 
   
   #pooled_dim: ${pooled_dim} #spatial #depth  #all
@@ -156,11 +157,22 @@ model_config:
         cr: 100000
       dropout_proba: 0
       dtype_str: ${dtype}
+      input_shape: null
 
+    Cheng2020Anchor:
+      N: 192
+  
+    MLICPlusPlus:
+      N: 192
+      M: 320
+      context_window: 5
+      slice_num: 4
+      dtype_str: ${dtype}
 
   save_dir:
     AE_CNN: dense_${model.model_hparams.dense}/pooling_${model.model_hparams.pooling}_on_dim_${model.model_hparams.pooling_dim}/channels_${model.model_hparams.channels_list}/upsample_mode_${model.model_hparams.upsample_mode}/linear_layer_${model.model_hparams.linear_layer.use}/cr_${model.model_hparams.linear_layer.cr}/${model.model_hparams.n_conv_per_layer}_conv_per_layer/padding_${model.model_hparams.padding.mode}/interp_size_${model.model_hparams.padding.interp_size}/final_upsample_${model.model_hparams.final_upsample_str}/act_fn_${model.model_hparams.act_fn_str}/use_final_act_fn_${model.model_hparams.use_final_act_fn}  #_linear_layer_${model.model_hparams.linear_layer}_dropout_${model.model_hparams.dropout_proba}/
-
+    Cheng2020Anchor: epochs_${trainer.max_epochs}/lr_{model.opt_fn.lr}
+    MLICPlusPlus: epochs_${trainer.max_epochs}/lr_{model.opt_fn.lr}
 
 entrypoints:
   - _target_: pytorch_lightning.seed_everything

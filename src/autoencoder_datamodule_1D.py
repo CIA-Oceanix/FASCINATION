@@ -90,8 +90,8 @@ class AutoEncoderDatamodule_1D(pl.LightningDataModule):
             # else:
             #     n_time = self.time_ratio*time_size
     
-            space_factor = int(round(1 / self.space_ratio))
-            time_factor = int(round(1 / self.time_ratio))
+            space_factor = max(1, int(round(1 / self.space_ratio)))
+            time_factor = max(1, int(round(1 / self.time_ratio)))
             # Select every kth latitude and longitude
             da_sampled = self.input.isel(time=slice(0,None,time_factor),lat=slice(0, None, space_factor), lon=slice(0, None, space_factor))
             # Randomly select a fraction of time points based on profile_ratio
@@ -117,8 +117,8 @@ class AutoEncoderDatamodule_1D(pl.LightningDataModule):
         n_test = total_profiles - (n_train + n_val)
         # Split along profiles dimension
         train_da = da_stacked.isel(profiles=slice(0, n_train))
-        val_da = da_stacked.isel(profiles=slice(n_train, n_train+n_val))
-        test_da = da_stacked.isel(profiles=slice(n_train+n_val, total_profiles))
+        # val_da = da_stacked.isel(profiles=slice(n_train, n_train+n_val))
+        # test_da = da_stacked.isel(profiles=slice(n_train+n_val, total_profiles))
 
         if any(param is None for param in self.norm_stats['params'].values()):
             self.get_train_norm_stats(train_da.data)

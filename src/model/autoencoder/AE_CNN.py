@@ -24,7 +24,7 @@ class AE_CNN(nn.Module):
         dtype_str (str): Data type.
     """
     def __init__(self,
-                 input_shape: tuple = (4, 107, 240, 240),
+                 input_shape: tuple = (4, 157, 140, 240),
                  channels_list: list = [1, 1, 1, 1],
                  kernel_list: Union[int, list] = 3,
                  n_conv_per_layer: int = 1,
@@ -35,7 +35,7 @@ class AE_CNN(nn.Module):
                  upsample_mode: str = "trilinear",
                  pooling: bool = "Max",
                  pooling_dim: str = "all",
-                 dense: bool = False,
+                 dense: bool = True,
                  linear_layer: dict = {"use": True, "cr": 1000},
                  dropout_proba: bool = 0,
                  dtype_str: str = "float32",
@@ -154,6 +154,10 @@ class AE_CNN(nn.Module):
         z = self.encoder(x)
         self.bottleneck_shape = z.shape
         self.cr = x.shape.numel() / z.shape.numel()
+        self.total_bits = z.numel() * z.element_size() * 8
+        self.bpe = self.total_bits / np.prod(self.input_shape)
+         # Bits per pixel calculation
+
 
         if self.linear_layer["use"]:
             self.z_pre_linear_shape = self.encoder.net(x).shape

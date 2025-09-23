@@ -38,3 +38,4 @@ outputs/*
 
 imgs/
 tensorboard/
+pickle/

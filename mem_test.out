@@ -1,0 +1,8 @@
+Starting job on sl-mee-br-113
+               total       utilisé      libre     partagé tamp/cache   disponible
+Mem:           125Gi       2,0Gi       120Gi       5,7Mi       4,3Gi       123Gi
+Échange:       4,0Gi          0B       4,0Gi
+MemTotal:       131762572 kB
+MemFree:        126242716 kB
+MemAvailable:   129641304 kB
+Memory test finished
