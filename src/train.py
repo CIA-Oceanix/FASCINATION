@@ -38,16 +38,16 @@ def base_training(trainer, dm, lit_mod, dim = "3D", test_dm=None, ckpt=None, pic
     
 
 
-    if pickle_path:
-        os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
-        with open(pickle_path,"wb") as f:
-            pickle.dump(
-                dict(
-                    train=dm.train_ds.input.time.values,
-                    val=dm.val_ds.input.time.values,
-                    test=dm.test_ds.input.time.values
-                ),
-                f
-            )
+    # if pickle_path:
+    #     os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
+    #     with open(pickle_path,"wb") as f:
+    #         pickle.dump(
+    #             dict(
+    #                 train=dm.train_ds.input.time.values,
+    #                 val=dm.val_ds.input.time.values,
+    #                 test=dm.test_ds.input.time.values
+    #             ),
+    #             f
+    #         )
                 
     

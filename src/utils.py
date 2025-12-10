@@ -146,6 +146,12 @@ def loading_datamodule(dm):
 
 
 
+def save_checkpoint(state, dir_path = "/Odyssey/private/o23gauvr/code/MLIC/experiments",filename="checkpoint.pth.tar"):
+    Path(dir_path).mkdir(parents=True, exist_ok=True)
+    filename = os.path.join(dir_path, filename)
+    
+    torch.save(state, filename)
+
 
 def get_depth_array(ssf_da_path):
     return xr.open_dataarray(ssf_da_path).z.data

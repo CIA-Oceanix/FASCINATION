@@ -23,6 +23,7 @@ from typing import Dict, Tuple, Any
 import numpy as np
 import torch
 import torch.nn as nn
+import xarray as xr
 from tqdm import tqdm
 from scipy.ndimage import convolve
 from scipy.interpolate import interp1d
@@ -38,6 +39,57 @@ try:
 except Exception:
     MLICPlusPlus = None
     Config = dict
+
+
+def parse_experiment_config(ckpt_path):
+    """
+    Parse experiment_config.log file to extract N and M values.
+    
+    Args:
+        ckpt_path (str): PosixPath to checkpoint 
+        
+    Returns:
+        tuple: (N, M) values or (None, None) if parsing fails
+    """
+
+    config_file = list((ckpt_path.parent.parent).rglob("train_*.log")) 
+    if not config_file:
+        print(f"Warning: train logs not found in {ckpt_path}")
+        return None, None
+    
+    config_file = config_file[0]  # Get the first match if multiple found
+
+    try:
+        with open(config_file, 'r') as f:
+            content = f.read()
+        
+        # Extract N and M values from MODEL CONFIGURATION section
+        N, M = None, None
+        
+        lines = content.split('\n')
+
+        cfg = eval((lines[1].strip().split("INFO: ")[-1]).replace("<class 'torch.nn.modules.activation.","nn.").replace("'>",""))
+
+
+        return cfg
+        
+            
+    except Exception as e:
+        print(f"Error parsing config file in {ckpt_path}: {e}")
+        return None
+
+
+
+def find_first_level_dirs(base_dir: str) -> Dict[str, str]:
+    result = {}
+    try:
+        for name in next(os.walk(base_dir))[1]:
+            # if name == 'mute':
+            #     continue
+            result[name] = os.path.join(base_dir, name)
+    except Exception:
+        pass
+    return result
 
 
 def cubic_interpolate_along_axis(arr: np.ndarray, target_size: int, axis: int) -> np.ndarray:
@@ -85,19 +137,13 @@ def get_f1_score(min_max_idx_truth: np.ndarray, min_max_idx_ae: np.ndarray, axs:
     return f1_score
 
 
-def compute_psnr(a: np.ndarray, b: np.ndarray, data_range: float = 1.0) -> float:
-    """
-    Compute PSNR using explicit data_range (max - min). If data are in [0,1], data_range=1.0.
-    PSNR = 10 * log10( (data_range ** 2) / MSE )
-    """
+def compute_psnr(a: np.ndarray, b: np.ndarray, max_val: float = 255.0) -> float:
+
     mse = np.mean((a - b) ** 2)
     if mse <= 0:
         return float('inf')
-    # protect against zero/negative ranges
-    dr = float(data_range) if data_range is not None else 1.0
-    if dr <= 0:
-        dr = 1.0
-    return 10 * math.log10((dr ** 2) / mse)
+
+    return 20 * np.log10(max_val) - 10 * np.log10(mse)
 
 
 def compute_msssim(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -108,45 +154,116 @@ def compute_total_bits(out_net: Dict[str, torch.Tensor]) -> float:
     return sum(torch.log(likelihoods).sum() / (-math.log(2)) for likelihoods in out_net['likelihoods'].values()).item()
 
 
-def parse_experiment_config(model_path: str) -> Dict[str, Any]:
-    files = list(Path(model_path).rglob('train_*.log'))
-    if not files:
-        return {}
-    try:
-        with open(files[0], 'r') as f:
-            lines = f.readlines()
-        # previous code stored a cfg dict in line 2; attempt to eval safely
-        for ln in lines:
-            if 'INFO:' in ln and '{' in ln:
-                try:
-                    cfg = eval((ln.strip().split("INFO: ")[-1]).replace("<class 'torch.nn.modules.activation.","nn.").replace("'>",""))
-                    if isinstance(cfg, dict):
-                        return cfg
-                except Exception:
-                    continue
-    except Exception:
-        pass
-    return {}
+def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarray, depth_array: np.ndarray) -> Dict[str, float]:
+    """Compute metrics for a single truth / reconstructed pair (both unnormalized).
+
+    Returns a dict with the same keys used elsewhere in the script.
+    """
+    metrics = {}
+
+    max_ssp_truth_idx = np.nanargmax(test_ssp_truth, axis=1)
+    ecs_truth = depth_array[max_ssp_truth_idx]
+
+    # # PSNR using truth range by default
+    # truth_min = float(np.nanmin(test_ssp_truth))
+    # truth_max = float(np.nanmax(test_ssp_truth))
+    # truth_range = truth_max - truth_min if truth_max > truth_min else 1.0
+
+    psnr = compute_psnr(test_ssp_truth, ae_ssp_test)
+
+    msssim = compute_msssim(torch.tensor(cubic_interpolate_along_axis(test_ssp_truth, 161, axis=2), dtype=torch.float64),
+                            torch.tensor(cubic_interpolate_along_axis(ae_ssp_test, 161, axis=2), dtype=torch.float64))
+
+    max_ssp_ae_idx = np.nanargmax(ae_ssp_test, axis=1)
+    ecs_pred_ae = depth_array[max_ssp_ae_idx]
+
+    ae_ssp_rmse = np.sqrt(np.mean((test_ssp_truth - ae_ssp_test) ** 2))
+    ae_ecs_rmse = np.sqrt(np.mean((ecs_truth - ecs_pred_ae) ** 2))
+    mae = np.mean(np.abs(test_ssp_truth - ae_ssp_test))
+
+    min_max_idx_truth = get_min_max_idx(test_ssp_truth, pad=False)
+    min_max_idx_ae = get_min_max_idx(ae_ssp_test, pad=False)
+    mean_error_n_min_max = np.mean(np.abs(np.sum(min_max_idx_truth, axis=1) - np.sum(min_max_idx_ae, axis=1)))
+
+    F1_score = get_f1_score(min_max_idx_truth, min_max_idx_ae)
+    f1_score = np.mean(F1_score)
+
+    r2 = 1 - (np.sum((test_ssp_truth - ae_ssp_test) ** 2) / np.sum((test_ssp_truth - np.mean(test_ssp_truth)) ** 2))
+
+    # Compute filtered F1 score
+    b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
+    filtered_ae_test_arr = filtfilt(b, a, ae_ssp_test, axis=1)
+    min_max_idx_filtered_ae = get_min_max_idx(filtered_ae_test_arr, pad=False)
+    filtered_F1_score = get_f1_score(min_max_idx_truth, min_max_idx_filtered_ae)
+    filtered_f1_score = np.mean(filtered_F1_score)
+
+    metrics = {
+        'RMSE': ae_ssp_rmse,
+        'PSNR': psnr,
+        'MS-SSIM': msssim,
+        'ECS': ae_ecs_rmse,
+        'MAE': mae,
+        'mean_error_n_min_max': mean_error_n_min_max,
+        'F1_score': f1_score,
+        'Filtered_F1_score': filtered_f1_score,
+        'R2_score': r2,
+    }
+
+    return metrics
 
 
-def find_first_level_dirs(base_dir: str) -> Dict[str, str]:
-    result = {}
-    for name in next(os.walk(base_dir))[1]:
-        if name == 'mute':
-            continue
-        result[name] = os.path.join(base_dir, name)
-    return result
+
+
+def get_best_worst_random(test_ssp_truth_local, ae_ssp_test_local, depth_array_local, metric_name):
+    if metric_name == 'RMSE':
+        errors = np.sqrt(np.mean((test_ssp_truth_local - ae_ssp_test_local) ** 2, axis=1))
+        score = -errors
+    elif metric_name == 'MAE':
+        errors = np.mean(np.abs(test_ssp_truth_local - ae_ssp_test_local), axis=1)
+        score = -errors
+    elif metric_name == 'ECS':
+        max_truth_idx = np.nanargmax(test_ssp_truth_local, axis=1)
+        max_pred_idx = np.nanargmax(ae_ssp_test_local, axis=1)
+        ecs_truth = depth_array_local[max_truth_idx]
+        ecs_pred = depth_array_local[max_pred_idx]
+        errors = np.abs(ecs_truth - ecs_pred)
+        score = -errors
+    elif metric_name == 'R2':
+        num = np.sum((test_ssp_truth_local - ae_ssp_test_local) ** 2, axis=1)
+        den = np.sum((test_ssp_truth_local - np.mean(test_ssp_truth_local, axis=1, keepdims=True)) ** 2, axis=1)
+        score = 1 - num / den
+    elif metric_name == 'F1_score':
+        min_max_idx_truth = get_min_max_idx(test_ssp_truth_local, pad=False)
+        min_max_idx_ae = get_min_max_idx(ae_ssp_test_local, pad=False)
+        score = get_f1_score(min_max_idx_truth, min_max_idx_ae)
+    else:
+        raise ValueError(f'Unknown metric {metric_name}')
+
+    flat_score = score.reshape(-1)
+    best_idx = np.argmax(flat_score)
+    worst_idx = np.argmin(flat_score)
+
+    def unravel(idx):
+        return np.unravel_index(idx, score.shape)
+
+    def extract(idx):
+        t0, lat0, lon0 = idx
+        return {
+            't_lat': ((t0, lat0), ae_ssp_test_local[t0, :, lat0, :]),
+            't_lat_lon': ((t0, lat0, lon0), ae_ssp_test_local[t0, :, lat0, lon0])
+        }
+
+    return {'best': extract(unravel(best_idx)), 'worst': extract(unravel(worst_idx))}
 
 
 def compute_and_save(
     dm_mlic_pkl: str,
     dm_cae_pkl: str,
+    test_ssp_da: xr.DataArray,
     mlic_base_dir: str,
     other_ckpt_base: str,
     out_pickle_dir: str,
     device: str = None,
-    psnr_range_mode: str = 'truth',
-    psnr_range_value: float = None,
     verbose: bool = False,
     unique_name: bool = True,
 ):
@@ -161,12 +278,64 @@ def compute_and_save(
         dm_cae = pickle.load(f)
 
     depth_array = dm_mlic.depth_array
-    test_ssp_arr = dm_mlic.test_da.data
+    #test_ssp_arr = dm_mlic.test_da.data
+    season_idx = dm_mlic.test_da.season_idx
+
+    t_idx, lat_idx, lon_idx = 15, 101, 81
+
+    x_min,x_max = dm_mlic.norm_stats["params"].values()
+    mean,std = dm_cae.norm_stats["params"].values()
+
+    
+    metric_datatest = test_ssp_da.data
+    
+
+
+    lat_size = len(test_ssp_da.lat)
+    lon_size = len(test_ssp_da.lon)
+    n_lat = int(np.ceil(lat_size / 64))
+    closest_lat_size = n_lat * 64
+    n_lon = int(np.ceil(lon_size / 64))
+    closest_lon_size = n_lon * 64
+    new_lat = np.linspace(test_ssp_da.lat.min().item(), test_ssp_da.lat.max().item(), closest_lat_size)
+    new_lon = np.linspace(test_ssp_da.lon.min().item(), test_ssp_da.lon.max().item(), closest_lon_size)
+    augmented_da = test_ssp_da.interp(lat=new_lat, lon=new_lon, method="cubic").astype(getattr(np, dm_cae.dtype_str))
+    mlic_test_arr = augmented_da.data
+
+    cae_test_da = (test_ssp_da - mean) / std
+    cae_test_tens = torch.tensor(cae_test_da.data, device=device, dtype=getattr(torch, dm_cae.dtype_str))
+    
+    
+    mlic_test_arr = (mlic_test_arr-x_min)/(x_max-x_min)
+    mlic_test_arr = mlic_test_arr.astype(getattr(np, dm_mlic.dtype_str))
+
+
+    data = "enatl"  # "natl" or "enatl"
+
+    sst_path = {"enatl": "/Odyssey/public/enatl60/sst/eNATL60-BLB002-SST-2009-2010-1_20.nc",
+                "natl": "/Odyssey/public/natl60/sst/NATL60_IFREMER_sources_and_sst_2016_2017.nc"}
+
+    sst_da = xr.open_dataarray(sst_path[data])
+
+    sst_train = sst_da.interp_like(dm_mlic.train_dataloader().dataset.input, method="nearest").data
+    sst_test = sst_da.interp_like(dm_mlic.test_dataloader().dataset.input, method="nearest").data
+
+    # Compute mean and std from train SST
+    sst_mean = sst_train.mean()
+    sst_std = sst_train.std()
+
+    # Normalize SST arrays
+    #sst_train_norm = (sst_train - sst_mean) / sst_std
+    sst_test_norm = (sst_test - sst_mean) / sst_std
 
     # containers
     bit_rates = {}
-    outputs = {}
-    rgb_models = set()
+    #outputs = {}
+    
+    #rgb_models = set()
+    # containers for metrics and selected examples (avoid storing full arrays)
+    model_metrics: Dict[str, Dict[Any, Dict[str, Any]]] = {}
+    data_dict: Dict[str, Dict[Any, Any]] = {}
 
     # --- MLIC checkpoints ---
     mlic_ckpt_dict = find_first_level_dirs(mlic_base_dir)
@@ -174,30 +343,46 @@ def compute_and_save(
         print(f'Found {len(mlic_ckpt_dict)} first-level entries under {mlic_base_dir}')
 
     # Process SSP MLIC++ (in_channels==157)
-    for model_name, model_path in tqdm(mlic_ckpt_dict.items(), desc='SSP MLIC++ models', disable=not verbose):
+    for i, (model_name, model_path) in tqdm(enumerate(mlic_ckpt_dict.items()), desc='SSP MLIC++ models', disable=not verbose):
+        
+        
+
         ckpt_files = list(Path(model_path).rglob('checkpoint_best_loss.pth.tar'))
+        ckpt_files += list(Path(model_path).rglob('best_checkpoint_loss.pth.tar'))
         if not ckpt_files:
             continue
         for ckpt_file in ckpt_files:
             if verbose:
                 print(f'  Inspecting SSP models in {model_name} -> {model_path}, ckpt: {ckpt_file}')
-            cfg = parse_experiment_config(model_path)
-            if cfg.get('in_channels', None) != 157:
+            cfg = parse_experiment_config(ckpt_file)
+            if cfg.get('in_channels', None) == 3:
                 continue
+
+            if cfg.get('add_embedded_seasons', None) == True:
+                cfg["add_seasons"] = {"use": True, "mode": "embed"}
+
+            if "one_hot" in str(ckpt_file):
+                cfg["add_seasons"] = {"use": True, "mode": "one_hot"}
+                print("Using one_hot season encoding")
+
             N = cfg.get('N', 192)
             M = cfg.get('M', 320)
             ssp_config = Config({
                 'N': N, 'M': M, 'slice_num': cfg.get('slice_num', 10),
                 'context_window': cfg.get('context_window', 5), 'act': cfg.get('act', nn.GELU),
-                'in_channels': 157, 'out_channels': 157
+                'in_channels': cfg.get('in_channels', 157), 'out_channels': cfg.get('in_channels', 157), 
+                "add_seasons": cfg.get("add_seasons", {"use": False, "mode": None}),
+                "add_sst": cfg.get("add_sst", False)
             })
             try:
                 net = MLICPlusPlus(config=ssp_config).eval().to(device)
                 ck = torch.load(ckpt_file, map_location=device)
+                if "one_hot_old" in str(ckpt_file) or str(ckpt_file) == "/Odyssey/private/o23gauvr/code/MLIC/experiments/full_loss_batch_4_add_season_hot_one_64_96_0.0018_min_max/20251001_001608/checkpoints/checkpoint_best_loss.pth.tar":
+                    del ck['state_dict']["season_embed.weight"]
                 net.load_state_dict(ck['state_dict'])
-                x = torch.tensor(test_ssp_arr.copy()).to(device)
+                x = torch.tensor(mlic_test_arr.copy()).to(device=device, dtype=getattr(torch, dm_mlic.dtype_str))
                 with torch.no_grad():
-                    rv = net(x)
+                    rv = net(x,season_idx,sst_test_norm)
                 bits = compute_total_bits(rv)
                 numel = rv['x_hat'].numel()
                 original_bits = numel * 8
@@ -217,20 +402,54 @@ def compute_and_save(
                     'model_config': f'N={N}, M={M}', 'original_model_name': model_name
                 }
                 reconstructed_arr = rv['x_hat'].detach().cpu().numpy()
-                unorm_reconstructed_arr = unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
-                outputs.setdefault(dict_model_name, {})[cr] = unorm_reconstructed_arr
-            except Exception:
-                continue
+
+                reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
+
+                augmented_da[:] = reconstructed_arr
+
+                test_ssp_arr = augmented_da.interp(
+                lat=test_ssp_da.lat,
+                lon=test_ssp_da.lon,
+                method="nearest"
+                ).data
+                
+                # Unnormalize truth for metrics (keep as numpy array)
+                
+
+                model_metrics.setdefault(dict_model_name, {})
+                data_dict.setdefault(dict_model_name, {})
+                metrics = compute_metrics_for_arrays(metric_datatest, test_ssp_arr, depth_array)
+                model_metrics[dict_model_name][cr] = metrics
+                # selection
+                data_dict[dict_model_name][cr] = {}
+                for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
+                    data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, test_ssp_arr, depth_array, metric_name)
+                
+                data_dict[dict_model_name][cr]['selected'] = {
+                    't_lat': ((t_idx, lat_idx), test_ssp_arr[t_idx, :, lat_idx, :]),
+                    't_lat_lon': ((t_idx, lat_idx, lon_idx), test_ssp_arr[t_idx, :, lat_idx, lon_idx])
+                }
+
+                metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
+                model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
+                
+            except Exception as e:
+                print(e)
 
     # Process RGB MLIC++ (in_channels==3)
-    for model_name, model_path in tqdm(mlic_ckpt_dict.items(), desc='RGB MLIC++ models', disable=not verbose):
+    for i, (model_name, model_path) in tqdm(enumerate(mlic_ckpt_dict.items()), desc='RGB MLIC++ models', disable=not verbose):
+        
+        # if i>2:
+        #     break
+
         ckpt_files = list(Path(model_path).rglob('checkpoint_best_loss.pth.tar'))
+        ckpt_files += list(Path(model_path).rglob('best_checkpoint_loss.pth'))
         if not ckpt_files:
             continue
         for ckpt_file in ckpt_files:
             if verbose:
                 print(f'  Inspecting RGB models in {model_name} -> {model_path}, ckpt: {ckpt_file}')
-            cfg = parse_experiment_config(model_path)
+            cfg = parse_experiment_config(ckpt_file)
             if cfg.get('in_channels', None) != 3:
                 continue
             N = cfg.get('N', 192)
@@ -240,7 +459,7 @@ def compute_and_save(
                 net = MLICPlusPlus(config=ssp_config).eval().to(device)
                 ck = torch.load(ckpt_file, map_location=device)
                 net.load_state_dict(ck['state_dict'])
-                reconstructed_arr = np.zeros(test_ssp_arr.shape)
+                reconstructed_arr = np.zeros(mlic_test_arr.shape)
                 total_bits = 0
                 total_elements = 0
                 total_original_bits = 0
@@ -248,9 +467,9 @@ def compute_and_save(
                 for j in range(n_imgs):
                     start_idx = j * 3
                     end_idx = start_idx + 3
-                    x = torch.tensor(test_ssp_arr[:, start_idx:end_idx, :, :].copy()).to(device)
+                    x = torch.tensor(mlic_test_arr[:, start_idx:end_idx, :, :].copy()).to(device)
                     with torch.no_grad():
-                        rv = net(x)
+                        rv = net(x,season_idx,sst_test_norm)
                     bits = compute_total_bits(rv)
                     numel = rv['x_hat'].numel()
                     original_bits = numel * 8
@@ -269,12 +488,38 @@ def compute_and_save(
                 else:
                     dict_model_name = model_name.split('_min_max')[0] + sub_name
                 bit_rates.setdefault(dict_model_name, {})[cr] = {'bits_per_element': bpe, 'compression_rate': cr, 'total_compressed_bits': total_bits, 'total_original_bits': total_original_bits, 'model_config': f'N={N}, M={M}', 'original_model_name': model_name}
-                unorm_reconstructed_arr = unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
-                outputs.setdefault(dict_model_name, {})[cr] = unorm_reconstructed_arr
-                # remember this model came from RGB MLIC processing
-                rgb_models.add(dict_model_name)
-            except Exception:
-                continue
+                
+                
+
+                reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
+                augmented_da[:] = reconstructed_arr
+
+                test_ssp_arr = augmented_da.interp(
+                lat=test_ssp_da.lat,
+                lon=test_ssp_da.lon,
+                method="nearest"
+                ).data
+                
+
+                model_metrics.setdefault(dict_model_name, {})
+                data_dict.setdefault(dict_model_name, {})
+                metrics = compute_metrics_for_arrays(metric_datatest, test_ssp_arr, depth_array)
+                model_metrics[dict_model_name][cr] = metrics
+                # selection
+                data_dict[dict_model_name][cr] = {}
+                for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
+                    data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, test_ssp_arr, depth_array, metric_name)
+                
+                data_dict[dict_model_name][cr]['selected'] = {
+                    't_lat': ((t_idx, lat_idx),  test_ssp_arr[t_idx, :, lat_idx, :]),
+                    't_lat_lon': ((t_idx, lat_idx, lon_idx), test_ssp_arr[t_idx, :, lat_idx, lon_idx])
+                }
+
+                metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
+                model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
+
+            except Exception as e:
+                print(e)
 
     # --- User-provided original MLICC checkpoint ---
     # This block loads the specific original MLIC checkpoint the user asked for,
@@ -300,7 +545,7 @@ def compute_and_save(
             state = ck.get('state_dict', ck) if isinstance(ck, dict) else ck
             rgb_mlic_net.load_state_dict(state)
 
-            reconstructed_arr = np.zeros(test_ssp_arr.shape)
+            reconstructed_arr = np.zeros(mlic_test_arr.shape)
             total_bits = 0
             total_elements = 0
             total_original_bits = 0
@@ -308,7 +553,7 @@ def compute_and_save(
             for j in range(n_imgs):
                 start_idx = j * 3
                 end_idx = start_idx + 3
-                x = torch.tensor(test_ssp_arr[:, start_idx:end_idx, :, :].copy()).to(device)
+                x = torch.tensor(mlic_test_arr[:, start_idx:end_idx, :, :].copy()).to(device=device, dtype=getattr(torch, dm_mlic.dtype_str))
                 with torch.no_grad():
                     rv = rgb_mlic_net(x)
                 bits = compute_total_bits(rv)
@@ -329,24 +574,52 @@ def compute_and_save(
                 'model_config': f'N=192, M=320',
                 'original_model_name': orig_mlicc_ckpt
             }
-            unorm_reconstructed_arr = unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
-            outputs.setdefault(dict_model_name, {})[cr] = unorm_reconstructed_arr
-            # mark as RGB-derived so cutted metrics are computed
-            rgb_models.add(dict_model_name)
+
+            
+
+            reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
+            augmented_da[:] = reconstructed_arr
+            
+            test_ssp_arr = augmented_da.interp(
+            lat=test_ssp_da.lat,
+            lon=test_ssp_da.lon,
+            method="nearest"
+            ).data
+                
+
+            model_metrics.setdefault(dict_model_name, {})
+            data_dict.setdefault(dict_model_name, {})
+            metrics = compute_metrics_for_arrays(metric_datatest, test_ssp_arr, depth_array)
+            model_metrics[dict_model_name][cr] = metrics
+            # selection
+            data_dict[dict_model_name][cr] = {}
+            for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
+                data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, test_ssp_arr, depth_array, metric_name)
+            
+            data_dict[dict_model_name][cr]['selected'] = {
+                't_lat': ((t_idx, lat_idx), test_ssp_arr[t_idx, :, lat_idx, :]),
+                't_lat_lon': ((t_idx, lat_idx, lon_idx), test_ssp_arr[t_idx, :, lat_idx, lon_idx])
+            }
+
+            metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
+            model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
+
         except Exception as e:
             if verbose:
                 print(f'  Could not load/run original_mlicc from {orig_mlicc_ckpt}: {e}')
 
     # --- Other models loaded from ckpt directories ---
     ckpt_dict = find_first_level_dirs(other_ckpt_base)
-    test_ssp_truth_arr = dm_cae.test_da.data
-    test_ssp_truth = torch.tensor(test_ssp_truth_arr, device=device, dtype=getattr(torch, dm_cae.dtype_str))
+
+    
+
     if verbose:
         print(f'Found {len(ckpt_dict)} model directories under {other_ckpt_base}')
-    for model_carac in tqdm(ckpt_dict.keys(), desc='Models', disable=not verbose):
+    for i, model_carac in tqdm(enumerate(ckpt_dict.keys()), desc='Models', disable=not verbose):
+
+
         ckpt_list = list(Path(ckpt_dict[model_carac]).rglob('*.ckpt'))
         target_name = 'CAE' if unique_name else model_carac
-        outputs.setdefault(target_name, {})
         bit_rates.setdefault(target_name, {})
         for ckpt_path in ckpt_list:
             if verbose:
@@ -358,255 +631,58 @@ def compute_and_save(
                     print(f'    Could not get config for {ckpt_path}, skipping')
                 continue
             try:
-                lit_model = utils.load_model(str(ckpt_path), dm_cae, test_ssp_truth, verbose=False)
+                lit_model = utils.load_model(str(ckpt_path), dm_cae, cae_test_tens, verbose=False)
             except Exception:
                 if verbose:
                     print(f'    Could not load model {ckpt_path}, skipping')
                 continue
-            ssp_ae_test_arr = lit_model(test_ssp_truth).detach().cpu().numpy().astype(test_ssp_truth_arr.dtype)
+            ssp_ae_test_arr = lit_model(cae_test_tens).detach().cpu().numpy().astype(getattr(np, dm_cae.dtype_str))
             cr = lit_model.model_AE.cr
             bpe = lit_model.model_AE.bpe
             total_bits = lit_model.model_AE.total_bits
             if dm_cae.norm_stats.get('norm_location', '') == 'datamodule':
                 ssp_ae_test_arr = utils.unorm_ssp_arr_3D(ssp_ae_test_arr, dm_cae)
-            outputs[target_name][cr] = ssp_ae_test_arr
+            # store bit rate info
             bit_rates[target_name][cr] = {'bits_per_element': bpe, 'compression_rate': cr, 'total_compressed_bits': total_bits}
+            # compute metrics immediately and store small selected examples to avoid keeping full arrays
+            try:
+                model_metrics.setdefault(target_name, {})
+                data_dict.setdefault(target_name, {})
+                metrics = compute_metrics_for_arrays(metric_datatest, ssp_ae_test_arr, depth_array)
+                model_metrics[target_name][cr] = metrics
+                # selection
+                data_dict[target_name][cr] = {}
+                for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
+                    data_dict[target_name][cr][metric_name] = get_best_worst_random(metric_datatest, ssp_ae_test_arr, depth_array, metric_name)
+                t_idx, lat_idx, lon_idx = 15, 101, 81
+                data_dict[target_name][cr]['selected'] = {
+                    't_lat': ((t_idx, lat_idx), ssp_ae_test_arr[t_idx, :, lat_idx, :]),
+                    't_lat_lon': ((t_idx, lat_idx, lon_idx), ssp_ae_test_arr[t_idx, :, lat_idx, lon_idx])
+                }
 
-    # interpolate outputs to original_da resolution if needed (keeps previous logic)
-    augmented_da = dm_mlic.test_da
-    original_da = dm_cae.test_da
-    test_ssp_truth = original_da.data
-    test_ssp_truth = utils.unorm_ssp_arr_3D(test_ssp_truth, dm_cae)
+                metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], ssp_ae_test_arr[:, :-1, ...], depth_array[:-1])
+                model_metrics.setdefault(f'cutted_{target_name}', {})[cr] = metrics_cut
 
-    # compute truth range
-    truth_min = float(np.nanmin(test_ssp_truth))
-    truth_max = float(np.nanmax(test_ssp_truth))
-    truth_range = truth_max - truth_min if truth_max > truth_min else 1.0
-
-    if verbose:
-        print('Interpolating outputs to original datamodule resolution (if needed)')
-    for model in list(outputs.keys()):
-        if 'CAE' not in model:
-            for cr, reconstructed_arr in list(outputs[model].items()):
+            except Exception as e:
                 if verbose:
-                    print(f'  Interpolating model {model} @ CR {cr}')
-                augmented_da[:] = reconstructed_arr
-                reconstructed_arr = augmented_da.interp_like(original_da, method='nearest').data
-                outputs[model][cr] = reconstructed_arr
+                    print(f'Failed to compute metrics/selection for CAE {ckpt_path}: {e}')
 
-    # if global mode, compute global range across outputs and truth
-    global_range = truth_range
-    if psnr_range_mode == 'global':
-        gmin = truth_min
-        gmax = truth_max
-        for _, cr_dict in outputs.items():
-            for arr in cr_dict.values():
-                try:
-                    a_min = float(np.nanmin(arr))
-                    a_max = float(np.nanmax(arr))
-                    if a_min < gmin:
-                        gmin = a_min
-                    if a_max > gmax:
-                        gmax = a_max
-                except Exception:
-                    continue
-        global_range = gmax - gmin if gmax > gmin else truth_range
+    # (selection helper already defined above and used for CAE and MLIC models)
 
-    # Evaluate metrics
-    model_metrics: Dict[str, Dict[Any, Dict[str, Any]]] = {}
-    for model, cr_dict in tqdm(outputs.items(), desc='Evaluating models', disable=not verbose):
-        model_metrics[model] = {}
-        for cr, ae_ssp_test_arr in cr_dict.items():
-            if verbose:
-                print(f'Evaluating metrics for model {model} @ CR {cr}')
-            ae_ssp_test = ae_ssp_test_arr
-            max_ssp_truth_idx = np.nanargmax(test_ssp_truth, axis=1)
-            ecs_truth = depth_array[max_ssp_truth_idx]
-            # determine data_range for PSNR according to mode
-            if psnr_range_mode == 'per':
-                try:
-                    a_min = float(np.nanmin(ae_ssp_test))
-                    a_max = float(np.nanmax(ae_ssp_test))
-                    dr = max(a_max, truth_max) - min(a_min, truth_min)
-                except Exception:
-                    dr = truth_range
-            elif psnr_range_mode == 'global':
-                dr = global_range
-            elif psnr_range_mode == 'value':
-                dr = float(psnr_range_value) if psnr_range_value is not None else truth_range
-            else:  # 'truth'
-                dr = truth_range
-
-            psnr = compute_psnr(test_ssp_truth, ae_ssp_test, data_range=dr)
-            msssim = compute_msssim(torch.tensor(cubic_interpolate_along_axis(test_ssp_truth, 161, axis=2), dtype=torch.float64), torch.tensor(cubic_interpolate_along_axis(ae_ssp_test, 161, axis=2), dtype=torch.float64))
-            max_ssp_ae_idx = np.nanargmax(ae_ssp_test, axis=1)
-            ecs_pred_ae = depth_array[max_ssp_ae_idx]
-            ae_ssp_rmse = np.sqrt(np.mean((test_ssp_truth - ae_ssp_test) ** 2))
-            ae_ecs_rmse = np.sqrt(np.mean((ecs_truth - ecs_pred_ae) ** 2))
-            mae = np.mean(np.abs(test_ssp_truth - ae_ssp_test))
-            min_max_idx_truth = get_min_max_idx(test_ssp_truth, pad=False)
-            min_max_idx_ae = get_min_max_idx(ae_ssp_test, pad=False)
-            mean_error_n_min_max = np.mean(np.abs(np.sum(min_max_idx_truth, axis=1) - np.sum(min_max_idx_ae, axis=1)))
-            F1_score = get_f1_score(min_max_idx_truth, min_max_idx_ae)
-            f1_score = np.mean(F1_score)
-            r2 = 1 - (np.sum((test_ssp_truth - ae_ssp_test) ** 2) / np.sum((test_ssp_truth - np.mean(test_ssp_truth)) ** 2))
-            b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
-            filtered_ae_test_arr = filtfilt(b, a, ae_ssp_test, axis=1)
-            min_max_idx_filtered_ae = get_min_max_idx(filtered_ae_test_arr, pad=False)
-            filtered_F1_score = np.mean(get_f1_score(min_max_idx_truth, min_max_idx_filtered_ae))
-            model_metrics[model][cr] = {
-                'RMSE': ae_ssp_rmse,
-                'PSNR': psnr,
-                'MS-SSIM': msssim,
-                'ECS': ae_ecs_rmse,
-                'MAE': mae,
-                'mean_error_n_min_max': mean_error_n_min_max,
-                'F1_score': f1_score,
-                'Filtered_F1_score': filtered_F1_score,
-                'R2_score': r2,
-            }
-
-            # Additional metrics for RGB MLIC models with last depth point removed
-            if model in rgb_models:
-                try:
-                    truth_cut = test_ssp_truth[:, :-1, ...]
-                    ae_cut = ae_ssp_test[:, :-1, ...]
-                    depth_cut = depth_array[:-1]
-
-                    # psnr range for cut
-                    if psnr_range_mode == 'per':
-                        try:
-                            a_min = float(np.nanmin(ae_cut))
-                            a_max = float(np.nanmax(ae_cut))
-                            dr_cut = max(a_max, truth_max) - min(a_min, truth_min)
-                        except Exception:
-                            dr_cut = truth_range
-                    elif psnr_range_mode == 'global':
-                        dr_cut = global_range
-                    elif psnr_range_mode == 'value':
-                        dr_cut = float(psnr_range_value) if psnr_range_value is not None else truth_range
-                    else:
-                        dr_cut = truth_range
-
-                    psnr_cut = compute_psnr(truth_cut, ae_cut, data_range=dr_cut)
-                    msssim_cut = compute_msssim(torch.tensor(cubic_interpolate_along_axis(truth_cut, 161, axis=2), dtype=torch.float64), torch.tensor(cubic_interpolate_along_axis(ae_cut, 161, axis=2), dtype=torch.float64))
-
-                    max_truth_idx_cut = np.nanargmax(truth_cut, axis=1)
-                    ecs_truth_cut = depth_cut[max_truth_idx_cut]
-                    max_ae_idx_cut = np.nanargmax(ae_cut, axis=1)
-                    ecs_pred_cut = depth_cut[max_ae_idx_cut]
-
-                    ae_rmse_cut = np.sqrt(np.mean((truth_cut - ae_cut) ** 2))
-                    ae_ecs_rmse_cut = np.sqrt(np.mean((ecs_truth_cut - ecs_pred_cut) ** 2))
-                    mae_cut = np.mean(np.abs(truth_cut - ae_cut))
-
-                    min_max_idx_truth_cut = get_min_max_idx(truth_cut, pad=False)
-                    min_max_idx_ae_cut = get_min_max_idx(ae_cut, pad=False)
-                    mean_error_n_min_max_cut = np.mean(np.abs(np.sum(min_max_idx_truth_cut, axis=1) - np.sum(min_max_idx_ae_cut, axis=1)))
-                    F1_score_cut = get_f1_score(min_max_idx_truth_cut, min_max_idx_ae_cut)
-                    f1_score_cut = np.mean(F1_score_cut)
-
-                    b_cut, a_cut = butter(N=2, Wn=0.107, btype='low', analog=False)
-                    filtered_ae_cut = filtfilt(b_cut, a_cut, ae_cut, axis=1)
-                    filtered_F1_score_cut = np.mean(get_f1_score(min_max_idx_truth_cut, get_min_max_idx(filtered_ae_cut, pad=False)))
-
-
-                    # model_metrics[f'{model}'] = model_metrics.get(f'{model}', {})
-                    # model_metrics[f'{model}'][cr] = {
-                    #     'RMSE': ae_rmse_cut,
-                    #     'PSNR': psnr_cut,
-                    #     'MS-SSIM': msssim_cut,
-                    #     'ECS': ae_ecs_rmse_cut,
-                    #     'MAE': mae_cut,
-                    #     'mean_error_n_min_max': mean_error_n_min_max_cut,
-                    #     'F1_score': f1_score_cut,
-                    #     'Filtered_F1_score': filtered_F1_score_cut,
-                    #     'R2_score': 1 - (np.sum((truth_cut - ae_cut) ** 2) / np.sum((truth_cut - np.mean(truth_cut)) ** 2)),
-                    # }
-
-                    model_metrics[f'cutted_{model}'] = model_metrics.get(f'cutted_{model}', {})
-                    model_metrics[f'cutted_{model}'][cr] = {
-                        'RMSE': ae_rmse_cut,
-                        'PSNR': psnr_cut,
-                        'MS-SSIM': msssim_cut,
-                        'ECS': ae_ecs_rmse_cut,
-                        'MAE': mae_cut,
-                        'mean_error_n_min_max': mean_error_n_min_max_cut,
-                        'F1_score': f1_score_cut,
-                        'Filtered_F1_score': filtered_F1_score_cut,
-                        'R2_score': 1 - (np.sum((truth_cut - ae_cut) ** 2) / np.sum((truth_cut - np.mean(truth_cut)) ** 2)),
-                    }
-                except Exception:
-                    if verbose:
-                        print(f'    Skipping cutted metrics for {model} @ CR {cr} due to error')
-
-    # Build data_dict (best/worst selected slices)
-    data_dict = {}
-    t, lat, lon = 15, 101, 81
-    metrics_to_check = ['RMSE', 'F1_score', 'ECS', 'R2']
-
-    def get_best_worst_random(test_ssp_truth, ae_ssp_test, depth_array, metric_name):
-        if metric_name == 'RMSE':
-            errors = np.sqrt(np.mean((test_ssp_truth - ae_ssp_test) ** 2, axis=1))
-            score = -errors
-        elif metric_name == 'MAE':
-            errors = np.mean(np.abs(test_ssp_truth - ae_ssp_test), axis=1)
-            score = -errors
-        elif metric_name == 'ECS':
-            max_truth_idx = np.nanargmax(test_ssp_truth, axis=1)
-            max_pred_idx = np.nanargmax(ae_ssp_test, axis=1)
-            ecs_truth = depth_array[max_truth_idx]
-            ecs_pred = depth_array[max_pred_idx]
-            errors = np.abs(ecs_truth - ecs_pred)
-            score = -errors
-        elif metric_name == 'R2':
-            num = np.sum((test_ssp_truth - ae_ssp_test) ** 2, axis=1)
-            den = np.sum((test_ssp_truth - np.mean(test_ssp_truth, axis=1, keepdims=True)) ** 2, axis=1)
-            score = 1 - num / den
-        elif metric_name == 'F1_score':
-            min_max_idx_truth = get_min_max_idx(test_ssp_truth, pad=False)
-            min_max_idx_ae = get_min_max_idx(ae_ssp_test, pad=False)
-            score = get_f1_score(min_max_idx_truth, min_max_idx_ae)
-        else:
-            raise ValueError(f'Unknown metric {metric_name}')
-
-        flat_score = score.reshape(-1)
-        best_idx = np.argmax(flat_score)
-        worst_idx = np.argmin(flat_score)
-
-        def unravel(idx):
-            return np.unravel_index(idx, score.shape)
-
-        def extract(idx):
-            t0, lat0, lon0 = idx
-            return {
-                't_lat': ((t0, lat0), test_ssp_truth[t0, :, lat0, :], ae_ssp_test[t0, :, lat0, :]),
-                't_lat_lon': ((t0, lat0, lon0), test_ssp_truth[t0, :, lat0, lon0], ae_ssp_test[t0, :, lat0, lon0])
-            }
-
-        return {'best': extract(unravel(best_idx)), 'worst': extract(unravel(worst_idx))}
+    # interpolate outputs to original_da resolution if needed and compute metrics on-the-fly
+    # truth already unnormalized in `test_ssp_arr`
 
     if verbose:
-        print('Selecting best/worst examples for each model')
-    for model, cr_dict in outputs.items():
-        data_dict[model] = {}
-        for cr, ae_ssp_test in cr_dict.items():
-            if verbose:
-                print(f'  Selecting examples for {model} @ CR {cr}')
-            data_dict[model][cr] = {}
-            for metric in metrics_to_check:
-                data_dict[model][cr][metric] = get_best_worst_random(test_ssp_truth, ae_ssp_test, depth_array, metric)
-            data_dict[model][cr]['selected'] = {
-                't_lat': ((t, lat), test_ssp_truth[t, :, lat, :], ae_ssp_test[t, :, lat, :]),
-                't_lat_lon': ((t, lat, lon), test_ssp_truth[t, :, lat, lon], ae_ssp_test[t, :, lat, lon])
-            }
+        print('Interpolating outputs to original datamodule resolution (if needed) and computing metrics')
+
+
 
     # Save outputs
     out_dir = Path(out_pickle_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / 'icaspp_model_metrics_bis.pkl', 'wb') as f:
+    with open(out_dir / 'model_metrics_icassp_corrected.pkl', 'wb') as f:
         pickle.dump(model_metrics, f)
-    with open(out_dir / 'icaspp_data_dict_bis.pkl', 'wb') as f:
+    with open(out_dir / 'data_dict_icassp_corrected.pkl', 'wb') as f:
         pickle.dump(data_dict, f)
     print(f'Saved model_metrics and data_dict to {out_dir}')
 
@@ -615,44 +691,49 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--dm-mlic-pkl', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_4_157_196_256.pkl')
     p.add_argument('--dm-cae-pkl', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/dm_enatl_mean_std_along_depth_4_157_240_240.pkl')
-    p.add_argument('--mlic-base-dir', default='/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++')#'/Odyssey/private/o23gauvr/code/MLIC/experiments/keep')
-    p.add_argument('--other-ckpt-base', default='/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE')
+    p.add_argument('--mlic-base-dir', default="/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#'/Odyssey/private/o23gauvr/code/MLIC/experiments') #'/Odyssey/private/o23gauvr/code/MLIC/experiments')  #'/Odyssey/private/o23gauvr/code/MLIC/experiments')#'/Odyssey/private/o23gauvr/code/MLIC/experiments/keep')
+    p.add_argument('--other-ckpt-base', default="/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE") #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE') #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE' #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE_visu_icassp")#
     p.add_argument('--out-pickle-dir', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle')
     p.add_argument('--device', default='cuda')
-    p.add_argument('--psnr-range-mode', choices=['truth', 'global', 'per', 'value'], default='truth', help='How to compute PSNR data range: truth (range from truth), global (range across truth+outputs), per (per-model range), value (explicit value)')
-    p.add_argument('--psnr-range-value', type=float, default=None, help='Explicit data range to use when --psnr-range-mode value is selected')
     p.add_argument('--verbose', action='store_true', default=True, help='Enable verbose prints and progress bars')
     p.add_argument('--unique-name', action='store_true', default=True, help='Use unique names for MLIC++ models (no hyperparam details)')
     return p.parse_args()
 
 
-def main():
+def main(test_ssp_arr: np.ndarray = None):
     args = parse_args()
     compute_and_save(
         args.dm_mlic_pkl,
         args.dm_cae_pkl,
+        test_ssp_arr,
         args.mlic_base_dir,
         args.other_ckpt_base,
         args.out_pickle_dir,
         device=args.device,
-        psnr_range_mode=args.psnr_range_mode,
-        psnr_range_value=args.psnr_range_value,
         verbose=args.verbose,
         unique_name=args.unique_name
     )
 
 
 if __name__ == '__main__':
-    main()
 
-#python src/compute_metrics.py --device cpu 
-# pickle_dir.mkdir(parents=True, exist_ok=True)  # Ensure the directory exists
+    with open("/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_4_157_196_256.pkl", "rb") as f_rgb:
+        dm_mlic = pickle.load(f_rgb)
 
-# # Define the file path for the pickle file
-# pickle_file = pickle_dir / f"model_outputs_best_worst_ntbk.pkl"
+    x_min,x_max = dm_mlic.norm_stats['params'].values()
+    season_idx = dm_mlic.test_da.season_idx
 
-# # Save the model_metrics dictionary
-# with open(pickle_file, "wb") as f:
-#     pickle.dump(data_dict, f)
+    natl_test_data = xr.open_dataarray("/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc").isel(time=season_idx)
+    max_depth = 2000
+    # Drop all lat coordinates presenting a nan for depths (z) inferior to 2000
+    # Select only data for depths < 2000
+    sub_da = natl_test_data.sel(z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True))
+    # For each lat, check if there is any nan across time, z, and lon
+    lat_nan = sub_da.isnull().any(dim=["time", "z", "lon"])
+    # Get valid latitudes (i.e. where there is no nan)
+    valid_lats = lat_nan.where(lat_nan == False, drop=True).coords["lat"].values
+    # Select only the valid latitudes and drop all z coordinates superior to 2000.
+    natl_test_data = natl_test_data.sel(lat=valid_lats, z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True)).astype(getattr(np, dm_mlic.dtype_str))
 
-# print(f"model_metrics dictionary saved to {pickle_file}")
+
+    main(natl_test_data)

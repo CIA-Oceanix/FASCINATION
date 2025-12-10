@@ -135,6 +135,30 @@ def differentiable_min_max_search(tensor, dim=1, tau=10):
 
 
 
+def differentiable_inflection_search(tensor, dim=1, tau=10):
+    """
+    Differentiable detector of inflection points (curvature sign flips).
+    Similar to min/max, but applied on 2nd derivative.
+    """
+    grad = torch.diff(tensor, dim=dim)
+    grad2 = torch.diff(grad, dim=dim)
+    grad2_sign = differentiable_sign(grad2, tau)
+
+    # detect flips in curvature
+    flips = torch.diff(grad2_sign, dim=dim)
+    flips = differentiable_sign(flips, tau)
+    flips = torch.abs(flips)
+
+    # Pad to keep same length
+    pad = [0] * (2 * tensor.dim())
+    pad[-(2 * dim + 1)] = 1
+    pad[-(2 * dim + 2)] = 2
+    flips = F.pad(flips, pad=tuple(pad), value=0)
+
+    return flips
+
+
+
 
 
 if __name__ == "__main__":

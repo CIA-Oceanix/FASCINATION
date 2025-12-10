@@ -113,12 +113,12 @@ class NoConvAE(nn.Module):
 
 if __name__ == "__main__":
     verbose = True
-    unorm = False
+
     xp = "autoencoder_V2"
-    use_4D_dif_pca = False or xp == "autoencoder_V2"
+    use_4D_dif_pca = False #or xp == "autoencoder_V2"
     pooling_dim = "spatial" if xp == "autoencoder_V2" else "all"
     min_components = 1
-    n_layers = 1
+    n_layers = 4
     gpu = 0
     cfg_path = f"config/xp/{xp}.yaml"
     cfg = OmegaConf.load(cfg_path)
@@ -130,10 +130,31 @@ if __name__ == "__main__":
     device = torch.device(dev)
     print("Inititing datamodule; Generating train and test datasets")
     dm = hydra.utils.call(cfg.datamodule)
-    train_ssp_arr, test_ssp_arr, dm = loading_datamodule(dm)
+    train_ssp_arr, _, dm = loading_datamodule(dm)
     if dm.norm_stats["norm_location"] == "datamodule":
-        train_ssp_arr, test_ssp_arr = unorm_ssp_arr_3D(train_ssp_arr, dm), unorm_ssp_arr_3D(test_ssp_arr, dm)
+        train_ssp_arr = unorm_ssp_arr_3D(train_ssp_arr, dm) #, unorm_ssp_arr_3D(test_ssp_arr, dm)
+    
+
+
+    #x_min,x_max = dm_mlic.norm_stats['params'].values()
+    season_idx = dm.test_da.season_idx
+
+    natl_test_data = xr.open_dataarray("/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc").isel(time=season_idx)
+    max_depth = 2000
+    # Drop all lat coordinates presenting a nan for depths (z) inferior to 2000
+    # Select only data for depths < 2000
+    sub_da = natl_test_data.sel(z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True))
+    # For each lat, check if there is any nan across time, z, and lon
+    lat_nan = sub_da.isnull().any(dim=["time", "z", "lon"])
+    # Get valid latitudes (i.e. where there is no nan)
+    valid_lats = lat_nan.where(lat_nan == False, drop=True).coords["lat"].values
+    # Select only the valid latitudes and drop all z coordinates superior to 2000.
+    natl_test_data = natl_test_data.sel(lat=valid_lats, z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True)).astype(getattr(np, dm.dtype_str))
+
+    test_ssp_arr = natl_test_data.data
+    
     test_ssp_tens = torch.tensor(test_ssp_arr, dtype=getattr(torch, cfg.dtype), device=device)
+    
     max_components = train_ssp_arr.shape[1] + 1
     if min_components == -1:
         min_components = max_components - 1
@@ -251,5 +272,5 @@ if __name__ == "__main__":
         pca_name = "dif_pca"
     else:
         pca_name = "sklearn_pca"
-    with open(f'pickle/model_metrics_pca_all_components_no_pooling.pkl', 'wb') as f:
+    with open(f'pickle/model_metrics_pca.pkl', 'wb') as f:
         pickle.dump(model_metrics, f)

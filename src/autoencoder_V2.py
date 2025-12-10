@@ -19,7 +19,7 @@ from src.model.autoencoder.Cheng2020Anchor import Cheng2020Anchor
 # from models import MLICPlusPlus # type: ignore
 #from src.model.autoencoder.AE_CNN_pool_2D import AE_CNN_pool_2D
 #from src.model.autoencoder.AE_CNN_1D import AE_CNN_1D
-from src.utils import check_differentiable, check_abnormal_grad
+from src.utils import check_differentiable, check_abnormal_grad, save_checkpoint
 
 
 import src.differentiable_fonc as DF
@@ -54,7 +54,8 @@ class AutoEncoder(pl.LightningModule):
         self.depth_pre_treatment = {"method": None}
 
 
-
+        self.best = float('inf')
+        self.loss_dict = {}
         
         self.save_hyperparameters()
 
@@ -82,7 +83,7 @@ class AutoEncoder(pl.LightningModule):
             #     self.model_AE = MLICPlusPlus(config=self.model_hparams)
             # else:
                 # Existing AutoEncoder initialization
-            self.model_AE = self.initiate_model(self.model_name, self.model_hparams)
+            self.model_AE = self.initiate_model(self.model_name, self.model_hparams, batch)
 
 
             #self.set_last_activation_function()
@@ -152,6 +153,7 @@ class AutoEncoder(pl.LightningModule):
     def on_train_start(self):
         # New code to compute baseline losses and update normalized_loss_weight based on the initial batch.
         # Begin new normalization procedure:
+        self.best = float('inf')
         self.model_AE.eval()
         with torch.no_grad():
             ssp_truth = self.example_input_array
@@ -216,10 +218,42 @@ class AutoEncoder(pl.LightningModule):
         batch.requires_grad = True
         return self.step(batch,'train')
     
+    def on_validation_start(self):
+        self.avg_val_loss = 0.0
+        return super().on_validation_start()
+
+    
     def validation_step(self, batch, batch_idx):
         self.eval()
-        return self.step(batch,'val')
-    
+        val_loss = self.step(batch,'val')
+        self.avg_val_loss += val_loss
+        return val_loss
+
+
+    def on_validation_end(self):
+        self.avg_val_loss = self.avg_val_loss / len(self.trainer.datamodule.val_dataloader())
+        if self.avg_val_loss < self.best:
+            self.best = self.avg_val_loss
+            state = {
+                "epoch": self.current_epoch + 1,
+                "state_dict": self.model_AE.state_dict(),
+                "loss_dict": self.loss_dict,
+                "optimizer": self.opt_fn.state_dict(),
+                "norm_stats": self.norm_stats,
+                "depth_pre_treatment": self.depth_pre_treatment,
+            }
+
+            dir_path = self.trainer.checkpoint_callback.dirpath 
+
+            save_checkpoint(
+                state= state,
+                dir_path=dir_path,
+                filename="best_checkpoint_loss.pth.tar"
+            )
+
+            print('best checkpoint (loss) saved.')
+            print(f"New best validation loss: {self.avg_val_loss}")
+
     def test_step(self, batch, batch_idx):
         self.eval()
         return self.step(batch,'test')
@@ -278,7 +312,8 @@ class AutoEncoder(pl.LightningModule):
             + self.normalized_loss_weight['fft_weight'] * fft_loss
 
         
-        if phase == "test":
+        if phase == "val" or phase == "test":
+            
         
             if self.depth_pre_treatment.get("method") == "pca" and self.depth_pre_treatment.get("train_on") == "components":
                 ssp_truth = self.dif_pca_4D.inverse_transform(ssp_truth)
@@ -310,6 +345,15 @@ class AutoEncoder(pl.LightningModule):
 
             max_abs_error = torch.sqrt(torch.max((ssp_reconstructed-ssp_truth)**2))
             self.log("Max abs error", max_abs_error, on_epoch = True, reduce_fx = torch.max)
+
+            self.loss_dict = {
+                "loss": full_loss,
+                "prediction_loss": pred_loss,
+                "weighted_loss": weighted_loss,
+                "treshold_loss": treshold_loss,
+                "max_position_loss": max_position_loss,
+                "max_value_loss": max_value_loss,
+            }
 
 
         self.log(f"{phase}_loss", full_loss, prog_bar=False, on_step=None, on_epoch=True)
