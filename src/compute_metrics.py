@@ -1,5 +1,6 @@
 import os 
 import sys
+import gc
 
 running_path = "/Odyssey/private/o23gauvr/code/"
 os.chdir(running_path)
@@ -32,6 +33,8 @@ from pytorch_msssim import ms_ssim
 
 import FASCINATION.src.utils as utils
 from FASCINATION.src.utils import unorm_ssp_arr_3D
+from FASCINATION.src.autoencoder_datamodule_natl_enatl import AEDatamodule, AE_BaseDataset_3D
+
 
 try:
     from MLIC.MLIC.models import MLICPlusPlus
@@ -84,8 +87,8 @@ def find_first_level_dirs(base_dir: str) -> Dict[str, str]:
     result = {}
     try:
         for name in next(os.walk(base_dir))[1]:
-            # if name == 'mute':
-            #     continue
+            if name == 'mute':
+                continue
             result[name] = os.path.join(base_dir, name)
     except Exception:
         pass
@@ -154,7 +157,7 @@ def compute_total_bits(out_net: Dict[str, torch.Tensor]) -> float:
     return sum(torch.log(likelihoods).sum() / (-math.log(2)) for likelihoods in out_net['likelihoods'].values()).item()
 
 
-def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarray, depth_array: np.ndarray) -> Dict[str, float]:
+def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarray, depth_array: np.ndarray, verbose=False) -> Dict[str, float]:
     """Compute metrics for a single truth / reconstructed pair (both unnormalized).
 
     Returns a dict with the same keys used elsewhere in the script.
@@ -169,11 +172,16 @@ def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarr
     # truth_max = float(np.nanmax(test_ssp_truth))
     # truth_range = truth_max - truth_min if truth_max > truth_min else 1.0
 
+
+    if verbose:        print("Computing PSNR...")
     psnr = compute_psnr(test_ssp_truth, ae_ssp_test)
 
+    if verbose:        print("Computing MS-SSIM...")
     msssim = compute_msssim(torch.tensor(cubic_interpolate_along_axis(test_ssp_truth, 161, axis=2), dtype=torch.float64),
                             torch.tensor(cubic_interpolate_along_axis(ae_ssp_test, 161, axis=2), dtype=torch.float64))
-
+    
+    #msssim = np.nan
+    if verbose:        print("Computing ECS, RMSE, MAE")
     max_ssp_ae_idx = np.nanargmax(ae_ssp_test, axis=1)
     ecs_pred_ae = depth_array[max_ssp_ae_idx]
 
@@ -181,6 +189,7 @@ def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarr
     ae_ecs_rmse = np.sqrt(np.mean((ecs_truth - ecs_pred_ae) ** 2))
     mae = np.mean(np.abs(test_ssp_truth - ae_ssp_test))
 
+    if verbose:        print("Computing min/max indices and F1 score...")
     min_max_idx_truth = get_min_max_idx(test_ssp_truth, pad=False)
     min_max_idx_ae = get_min_max_idx(ae_ssp_test, pad=False)
     mean_error_n_min_max = np.mean(np.abs(np.sum(min_max_idx_truth, axis=1) - np.sum(min_max_idx_ae, axis=1)))
@@ -188,14 +197,16 @@ def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarr
     F1_score = get_f1_score(min_max_idx_truth, min_max_idx_ae)
     f1_score = np.mean(F1_score)
 
+    if verbose:        print("Computing R2 score...")
     r2 = 1 - (np.sum((test_ssp_truth - ae_ssp_test) ** 2) / np.sum((test_ssp_truth - np.mean(test_ssp_truth)) ** 2))
 
-    # Compute filtered F1 score
-    b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
-    filtered_ae_test_arr = filtfilt(b, a, ae_ssp_test, axis=1)
-    min_max_idx_filtered_ae = get_min_max_idx(filtered_ae_test_arr, pad=False)
-    filtered_F1_score = get_f1_score(min_max_idx_truth, min_max_idx_filtered_ae)
-    filtered_f1_score = np.mean(filtered_F1_score)
+    # # Compute filtered F1 score
+    # if verbose:        print("Computing Filtered F1 score...")
+    # b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
+    # filtered_ae_test_arr = filtfilt(b, a, ae_ssp_test, axis=1)
+    # min_max_idx_filtered_ae = get_min_max_idx(filtered_ae_test_arr, pad=False)
+    # filtered_F1_score = get_f1_score(min_max_idx_truth, min_max_idx_filtered_ae)
+    # filtered_f1_score = np.mean(filtered_F1_score)
 
     metrics = {
         'RMSE': ae_ssp_rmse,
@@ -205,7 +216,7 @@ def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarr
         'MAE': mae,
         'mean_error_n_min_max': mean_error_n_min_max,
         'F1_score': f1_score,
-        'Filtered_F1_score': filtered_f1_score,
+        #'Filtered_F1_score': filtered_f1_score,
         'R2_score': r2,
     }
 
@@ -249,8 +260,9 @@ def get_best_worst_random(test_ssp_truth_local, ae_ssp_test_local, depth_array_l
     def extract(idx):
         t0, lat0, lon0 = idx
         return {
-            't_lat': ((t0, lat0), ae_ssp_test_local[t0, :, lat0, :]),
-            't_lat_lon': ((t0, lat0, lon0), ae_ssp_test_local[t0, :, lat0, lon0])
+            metric_name: score[t0, lat0, lon0],
+            't_lat': ((t0, lat0), test_ssp_truth_local[t0, :, lat0, :], ae_ssp_test_local[t0, :, lat0, :].copy()),  # .copy() to avoid keeping ref to full array
+            't_lat_lon': ((t0, lat0, lon0), test_ssp_truth_local[t0, :, lat0, lon0], ae_ssp_test_local[t0, :, lat0, lon0].copy())
         }
 
     return {'best': extract(unravel(best_idx)), 'worst': extract(unravel(worst_idx))}
@@ -259,7 +271,6 @@ def get_best_worst_random(test_ssp_truth_local, ae_ssp_test_local, depth_array_l
 def compute_and_save(
     dm_mlic_pkl: str,
     dm_cae_pkl: str,
-    test_ssp_da: xr.DataArray,
     mlic_base_dir: str,
     other_ckpt_base: str,
     out_pickle_dir: str,
@@ -277,56 +288,87 @@ def compute_and_save(
     with open(dm_cae_pkl, 'rb') as f:
         dm_cae = pickle.load(f)
 
+    data_path ={"enatl": "/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc",
+                "natl": "/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc"}
+    
+
+
     depth_array = dm_mlic.depth_array
-    #test_ssp_arr = dm_mlic.test_da.data
-    season_idx = dm_mlic.test_da.season_idx
+
+    #test_ssp_da = dm_cae.test_da #xr.open_dataarray(data_path['natl'])
+
+    test_coords = dm_mlic.test_ds.input.attrs["original_space_coords"]
+
+
+    #metric_datatest = unorm_ssp_arr_3D(dm_mlic.test_ds.input.data, dm_mlic)
+    augmented_da = dm_mlic.test_ds.input.copy()
+    mlic_test_arr = dm_mlic.test_ds.input.data.copy()
+    
+    test_norm = augmented_da.attrs['norm_stats']
+    season_idx = dm_mlic.test_ds.input.season_idx
+
+    metric_datatest = dm_mlic.test_ds.input.interp(
+                lat=test_coords['lat'],
+                lon=test_coords['lon'],
+                method="nearest"
+                ).data
+    metric_datatest = unorm_ssp_arr_3D(metric_datatest, test_norm)
+
+    cae_test_ds = dm_cae.test_ds.input
+    # Store unnormalized version for re-use in each checkpoint (will normalize fresh each time)
+    cae_test_ssp_arr_unnorm = cae_test_ds.data.copy()
+    cae_test_ssp_arr_unnorm = unorm_ssp_arr_3D(cae_test_ssp_arr_unnorm, cae_test_ds.attrs['norm_stats'])
+    
 
     t_idx, lat_idx, lon_idx = 15, 101, 81
 
-    x_min,x_max = dm_mlic.norm_stats["params"].values()
-    mean,std = dm_cae.norm_stats["params"].values()
+    batch_size = 4
+
+    # x_min,x_max = dm_mlic.norm_stats["params"]['x_min'], dm_mlic.norm_stats['params']['x_max']
+    # mean,std = dm_cae.norm_stats["params"].values()
 
     
-    metric_datatest = test_ssp_da.data
+    #metric_datatest = test_ssp_da.data
     
 
 
-    lat_size = len(test_ssp_da.lat)
-    lon_size = len(test_ssp_da.lon)
-    n_lat = int(np.ceil(lat_size / 64))
-    closest_lat_size = n_lat * 64
-    n_lon = int(np.ceil(lon_size / 64))
-    closest_lon_size = n_lon * 64
-    new_lat = np.linspace(test_ssp_da.lat.min().item(), test_ssp_da.lat.max().item(), closest_lat_size)
-    new_lon = np.linspace(test_ssp_da.lon.min().item(), test_ssp_da.lon.max().item(), closest_lon_size)
-    augmented_da = test_ssp_da.interp(lat=new_lat, lon=new_lon, method="cubic").astype(getattr(np, dm_cae.dtype_str))
-    mlic_test_arr = augmented_da.data
+    # lat_size = len(test_ssp_da.lat)
+    # lon_size = len(test_ssp_da.lon)
+    # n_lat = int(np.ceil(lat_size / 64))
+    # closest_lat_size = n_lat * 64
+    # n_lon = int(np.ceil(lon_size / 64))
+    # closest_lon_size = n_lon * 64
+    # new_lat = np.linspace(test_ssp_da.lat.min().item(), test_ssp_da.lat.max().item(), closest_lat_size)
+    # new_lon = np.linspace(test_ssp_da.lon.min().item(), test_ssp_da.lon.max().item(), closest_lon_size)
+    # augmented_da = test_ssp_da.interp(lat=new_lat, lon=new_lon, method="cubic").astype(getattr(np, dm_cae.dtype_str))
+    # mlic_test_arr = augmented_da.data
 
-    cae_test_da = (test_ssp_da - mean) / std
-    cae_test_tens = torch.tensor(cae_test_da.data, device=device, dtype=getattr(torch, dm_cae.dtype_str))
+    # cae_test_da = (test_ssp_da - mean) / std
+    # cae_test_tens = torch.tensor(cae_test_da.data, device=device, dtype=getattr(torch, dm_cae.dtype_str))
     
     
-    mlic_test_arr = (mlic_test_arr-x_min)/(x_max-x_min)
-    mlic_test_arr = mlic_test_arr.astype(getattr(np, dm_mlic.dtype_str))
+    # mlic_test_arr = (mlic_test_arr-x_min)/(x_max-x_min)
+    # mlic_test_arr = mlic_test_arr.astype(getattr(np, dm_mlic.dtype_str))
 
 
-    data = "enatl"  # "natl" or "enatl"
+    # data = "enatl"  # "natl" or "enatl"
 
-    sst_path = {"enatl": "/Odyssey/public/enatl60/sst/eNATL60-BLB002-SST-2009-2010-1_20.nc",
-                "natl": "/Odyssey/public/natl60/sst/NATL60_IFREMER_sources_and_sst_2016_2017.nc"}
+    # sst_path = {"enatl": "/Odyssey/public/enatl60/sst/eNATL60-BLB002-SST-2009-2010-1_20.nc",
+    #             "natl": "/Odyssey/public/natl60/sst/NATL60_IFREMER_sources_and_sst_2016_2017.nc"}
 
-    sst_da = xr.open_dataarray(sst_path[data])
+    # sst_da = xr.open_dataarray(sst_path[data])
 
-    sst_train = sst_da.interp_like(dm_mlic.train_dataloader().dataset.input, method="nearest").data
-    sst_test = sst_da.interp_like(dm_mlic.test_dataloader().dataset.input, method="nearest").data
+    # sst_train = sst_da.interp_like(dm_mlic.train_dataloader().dataset.input, method="nearest").data
+    # sst_test = sst_da.interp_like(dm_mlic.test_dataloader().dataset.input, method="nearest").data
 
-    # Compute mean and std from train SST
-    sst_mean = sst_train.mean()
-    sst_std = sst_train.std()
+    # # Compute mean and std from train SST
+    # sst_mean = sst_train.mean()
+    # sst_std = sst_train.std()
 
     # Normalize SST arrays
     #sst_train_norm = (sst_train - sst_mean) / sst_std
-    sst_test_norm = (sst_test - sst_mean) / sst_std
+    #sst_test_norm = (sst_test - sst_mean) / sst_std
+    sst_test_norm  = dm_mlic.test_ds.input.attrs['sst'].data
 
     # containers
     bit_rates = {}
@@ -345,15 +387,41 @@ def compute_and_save(
     # Process SSP MLIC++ (in_channels==157)
     for i, (model_name, model_path) in tqdm(enumerate(mlic_ckpt_dict.items()), desc='SSP MLIC++ models', disable=not verbose):
         
-        
 
         ckpt_files = list(Path(model_path).rglob('checkpoint_best_loss.pth.tar'))
         ckpt_files += list(Path(model_path).rglob('best_checkpoint_loss.pth.tar'))
+        ckpt_files += list(Path(model_path).rglob('best_checkpoint_ecs.pth.tar'))
+        ckpt_files += list(Path(model_path).rglob('best_checkpoint_rmse.pth.tar'))
+        ckpt_files += list(Path(model_path).rglob('best_checkpoint_f1.pth.tar'))
+
+
         if not ckpt_files:
             continue
+
+
         for ckpt_file in ckpt_files:
+
+            # if str(ckpt_file) != "/Odyssey/private/o23gauvr/code/FASCINATION/outputs/test/MLIC/fixed_weight_loss_64_96_1.0_CR_100000.0_good_split_enatl_mean_std_along_depth/20260114_185105/checkpoints/best_checkpoint_rmse.pth.tar":
+            #     continue
+                        
             if verbose:
-                print(f'  Inspecting SSP models in {model_name} -> {model_path}, ckpt: {ckpt_file}')
+                print(f'Inspecting SSP models in {model_name} -> {model_path}, ckpt: {ckpt_file}')
+
+
+            if len(ckpt_files) > 1:
+                sub_name = (str(ckpt_file).split(f'{model_name}/')[-1]).split('/')
+                if "checkpoints" in sub_name:
+                    sub_name.remove('checkpoints')
+                sub_name = "_" + "_".join(sub_name).split(".pth")[0]
+            else:
+                sub_name = ""
+            if unique_name:
+                dict_model_name = 'MLIC++ SSP' 
+            else:
+                dict_model_name = (model_name.split("mlicpp_on_ssp_")[-1]).split("_min_max")[0] + sub_name
+            
+
+
             cfg = parse_experiment_config(ckpt_file)
             if cfg.get('in_channels', None) == 3:
                 continue
@@ -372,83 +440,218 @@ def compute_and_save(
                 'context_window': cfg.get('context_window', 5), 'act': cfg.get('act', nn.GELU),
                 'in_channels': cfg.get('in_channels', 157), 'out_channels': cfg.get('in_channels', 157), 
                 "add_seasons": cfg.get("add_seasons", {"use": False, "mode": None}),
-                "add_sst": cfg.get("add_sst", False)
+                "add_sst": cfg.get("add_sst", False),
+                "enable_channel_context": cfg.get("enable_channel_context", True),
+                "enable_local_context": cfg.get("enable_local_context", True),
+                "enable_global_inter_context": cfg.get("enable_global_inter_context", True),
+                "enable_global_intra_context": cfg.get("enable_global_intra_context", True)
             })
+            
+
+            mlic_test_arr = dm_mlic.test_ds.input.data.copy()
+            mlic_test_arr = unorm_ssp_arr_3D(mlic_test_arr, test_norm)
+
+
             try:
                 net = MLICPlusPlus(config=ssp_config).eval().to(device)
                 ck = torch.load(ckpt_file, map_location=device)
                 if "one_hot_old" in str(ckpt_file) or str(ckpt_file) == "/Odyssey/private/o23gauvr/code/MLIC/experiments/full_loss_batch_4_add_season_hot_one_64_96_0.0018_min_max/20251001_001608/checkpoints/checkpoint_best_loss.pth.tar":
                     del ck['state_dict']["season_embed.weight"]
                 net.load_state_dict(ck['state_dict'])
-                x = torch.tensor(mlic_test_arr.copy()).to(device=device, dtype=getattr(torch, dm_mlic.dtype_str))
-                with torch.no_grad():
-                    rv = net(x,season_idx,sst_test_norm)
-                bits = compute_total_bits(rv)
-                numel = rv['x_hat'].numel()
-                original_bits = numel * 8
-                bpe = bits / numel
-                cr = original_bits / bits
-                if len(ckpt_files) > 1:
-                    sub_name = "_" + (str(ckpt_file).split(f'{model_name}/')[-1]).split('/')[0]
-                else:
-                    sub_name = ""
-                if unique_name:
-                    dict_model_name = 'MLIC++ SSP' 
-                else:
-                    dict_model_name = (model_name.split("mlicpp_on_ssp_")[-1]).split("_min_max")[0] + sub_name
+
+                try:
+                    test_norm = ck.get('test_norm_stats', None)
+                    test_norm_method = test_norm['method']
+                except:
+                    test_norm = augmented_da.attrs['norm_stats'].copy()
+                    test_norm_method = "min_max"
+                    test_norm['method'] = test_norm_method
+
+                
+                if test_norm_method == "min_max":
+                    x_min = test_norm["params"]["x_min"].astype(mlic_test_arr.dtype)
+                    x_max = test_norm["params"]["x_max"].astype(mlic_test_arr.dtype)    
+                    mlic_test_arr = (mlic_test_arr - x_min) / (x_max - x_min)
+                elif test_norm_method == "mean_std":
+                    mean = test_norm['params']["mean"].astype(mlic_test_arr.dtype)
+                    std = test_norm['params']["std"].astype(mlic_test_arr.dtype)
+                    mlic_test_arr = (mlic_test_arr - mean) / std
+                elif test_norm_method == "mean_std_along_depth":
+                    mean = test_norm['params']["mean_along_depth"].astype(mlic_test_arr.dtype)
+                    std = test_norm['params']["std_along_depth"].astype(mlic_test_arr.dtype)
+                    mlic_test_arr = (mlic_test_arr - mean) / std
+
+
+                reconstructed_arr = np.zeros((mlic_test_arr.shape[0], mlic_test_arr.shape[1], len(test_coords['lat']), len(test_coords['lon'])))
+                #reconstructed_arr = np.zeros(mlic_test_arr.shape)
+                n_batch = int(np.ceil(len(mlic_test_arr) / batch_size))
+                total_bits = 0
+                total_elements = 0
+                total_original_bits = 0
+                batch_metrics = []
+                for b_idx in range(n_batch):
+                    start_idx = b_idx * batch_size
+                    end_idx = min((b_idx + 1) * batch_size, len(mlic_test_arr))
+                    x_batch = torch.tensor(mlic_test_arr[start_idx:end_idx].copy()).to(device=device, dtype=getattr(torch, dm_mlic.dtype_str))
+                    season_idx_batch = season_idx[start_idx:end_idx]
+                    sst_test_norm_batch = sst_test_norm[start_idx:end_idx]
+                    with torch.no_grad():
+                        rv_batch = net(x_batch, season_idx_batch, sst_test_norm_batch)
+                    
+                    bits = compute_total_bits(rv_batch)
+                    numel = rv_batch['x_hat'].numel()
+                    original_bits = numel * rv_batch['x_hat'].element_size() * 8
+                    total_bits += bits
+                    total_elements += numel
+                    total_original_bits += original_bits
+
+                    # Unnormalize per batch
+                    batch_recon = rv_batch['x_hat'].detach().cpu().numpy()
+                    
+                    # Free GPU memory immediately after copying to CPU
+                    del x_batch, rv_batch
+                    torch.cuda.empty_cache()
+                    
+                    batch_recon = utils.unorm_ssp_arr_3D(batch_recon, test_norm)
+                    # Prepare batch-wise augmented_da
+                    batch_augmented_da = augmented_da.isel(time=slice(start_idx, end_idx)).copy()
+                    batch_augmented_da[:] = batch_recon
+                    # Interpolate per batch
+                    batch_test_ssp_arr = batch_augmented_da.interp(
+                        lat=test_coords['lat'],
+                        lon=test_coords['lon'],
+                        method="nearest"
+                    ).data
+                    #batch_test_ssp_arr = batch_recon
+
+                    b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
+                    batch_test_ssp_arr = filtfilt(b, a, batch_test_ssp_arr, axis=1).astype(batch_recon.dtype)
+
+                    reconstructed_arr[start_idx:end_idx] = batch_test_ssp_arr
+                    # Compute metrics per batch
+                    batch_truth = metric_datatest[start_idx:end_idx]
+                    batch_metrics.append(compute_metrics_for_arrays(batch_truth, batch_test_ssp_arr, depth_array))
+                    
+                    # Free batch memory
+                    del batch_recon, batch_augmented_da, batch_test_ssp_arr, batch_truth
+                
+                # Free normalized input after inference loop
+                del mlic_test_arr
+                
+                
+                # Average metrics
+                bpe = total_bits / total_elements
+                cr = total_original_bits / total_bits
+
                 bit_rates.setdefault(dict_model_name, {})[cr] = {
                     'bits_per_element': bpe, 'compression_rate': cr,
                     'total_compressed_bits': bits, 'total_original_bits': original_bits,
                     'model_config': f'N={N}, M={M}', 'original_model_name': model_name
                 }
-                reconstructed_arr = rv['x_hat'].detach().cpu().numpy()
+                if verbose:
+                    print("Averaging metrics for model:", dict_model_name, " at CR:", cr)
+                mean_metrics = {}
+                for k in batch_metrics[0].keys():
+                    vals = [bm[k] for bm in batch_metrics]
+                    mean_metrics[k] = float(np.mean(vals))
 
-                reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
 
-                augmented_da[:] = reconstructed_arr
+                
+                model_metrics.setdefault(dict_model_name, {})
+                model_metrics[dict_model_name][cr] = mean_metrics
 
-                test_ssp_arr = augmented_da.interp(
-                lat=test_ssp_da.lat,
-                lon=test_ssp_da.lon,
-                method="nearest"
-                ).data
+
+                #reconstructed_arr = rv['x_hat'].detach().cpu().numpy()
+
+                #reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
+                            
+                # if "mean_std" in model_name:
+                #     mean=dm_mlic.norm_stats['params']['mean']
+                #     std=dm_mlic.norm_stats['params']['std']
+                #     if "along_depth" in model_name:
+                #         reconstructed_arr = (reconstructed_arr*std) + mean
+
+                #     else:
+                #         reconstructed_arr = (reconstructed_arr*std.mean()) + mean.mean()
+
+                # else:
+                #     x_min,x_max = dm_mlic.norm_stats['params']['x_min'],dm_mlic.norm_stats['params']['x_max'] #dm.norm_stats['params'].values()
+                #     reconstructed_arr = (reconstructed_arr*(x_max-x_min)) + x_min
+
+                # augmented_da[:] = reconstructed_arr
+
+                # #test_ssp_arr = augmented_da.data.copy()
+                # test_ssp_arr = augmented_da.interp(
+                # lat=test_coords['lat'],
+                # lon=test_coords['lon'],
+                # method="nearest"
+                # ).data
                 
                 # Unnormalize truth for metrics (keep as numpy array)
                 
 
-                model_metrics.setdefault(dict_model_name, {})
                 data_dict.setdefault(dict_model_name, {})
-                metrics = compute_metrics_for_arrays(metric_datatest, test_ssp_arr, depth_array)
-                model_metrics[dict_model_name][cr] = metrics
-                # selection
+                
+                # metrics = compute_metrics_for_arrays(metric_datatest, test_ssp_arr, depth_array)
+                # model_metrics[dict_model_name][cr] = metrics
+                
+                # selection over last batch
+                if verbose:
+                    print("Selecting best/worst examples for model:", dict_model_name, " at CR:", cr)
                 data_dict[dict_model_name][cr] = {}
-                for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
-                    data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, test_ssp_arr, depth_array, metric_name)
+                for metric_name in ["RMSE", "F1_score", "ECS", "R2"]:
+                    data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, reconstructed_arr, depth_array, metric_name)
                 
                 data_dict[dict_model_name][cr]['selected'] = {
-                    't_lat': ((t_idx, lat_idx), test_ssp_arr[t_idx, :, lat_idx, :]),
-                    't_lat_lon': ((t_idx, lat_idx, lon_idx), test_ssp_arr[t_idx, :, lat_idx, lon_idx])
+                    't_lat': ((t_idx, lat_idx), metric_datatest[t_idx, :, lat_idx, :], reconstructed_arr[t_idx, :, lat_idx, :].copy()),  # .copy() to avoid keeping ref to full array
+                    't_lat_lon': ((t_idx, lat_idx, lon_idx), metric_datatest[t_idx, :, lat_idx, lon_idx], reconstructed_arr[t_idx, :, lat_idx, lon_idx].copy())
                 }
 
-                metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
-                model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
+                # metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
+                # model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
                 
             except Exception as e:
                 print(e)
+            finally:
+                # Memory cleanup after each checkpoint
+                if 'net' in dir():
+                    del net
+                if 'ck' in dir():
+                    del ck
+                if 'reconstructed_arr' in dir():
+                    del reconstructed_arr
+                if 'rv_batch' in dir():
+                    del rv_batch
+                if 'batch_metrics' in dir():
+                    del batch_metrics
+                torch.cuda.empty_cache()
+                gc.collect()
 
+    if verbose:
+        print("Finished SSP MLIC++ models processing.")
     # Process RGB MLIC++ (in_channels==3)
+
+    test_norm = augmented_da.attrs['norm_stats']
+    mlic_test_arr = dm_mlic.test_ds.input.data.copy()
+    mlic_test_arr = unorm_ssp_arr_3D(mlic_test_arr, test_norm)
+    x_min = test_norm["params"]["x_min"]
+    x_max = test_norm["params"]["x_max"]
+    mlic_test_arr = (mlic_test_arr - x_min) / (x_max - x_min)
+    test_norm["method"] = "min_max" # Ensure we know it's min_max for later unnormalization
+
+        
     for i, (model_name, model_path) in tqdm(enumerate(mlic_ckpt_dict.items()), desc='RGB MLIC++ models', disable=not verbose):
         
         # if i>2:
         #     break
 
-        ckpt_files = list(Path(model_path).rglob('checkpoint_best_loss.pth.tar'))
-        ckpt_files += list(Path(model_path).rglob('best_checkpoint_loss.pth'))
+        ckpt_files = list(Path(model_path).rglob('best_checkpoint_loss.pth.tar'))
+        #ckpt_files += list(Path(model_path).rglob('best_checkpoint_loss.pth'))
         if not ckpt_files:
             continue
         for ckpt_file in ckpt_files:
             if verbose:
-                print(f'  Inspecting RGB models in {model_name} -> {model_path}, ckpt: {ckpt_file}')
+                print(f'Inspecting RGB models in {model_name} -> {model_path}, ckpt: {ckpt_file}')
             cfg = parse_experiment_config(ckpt_file)
             if cfg.get('in_channels', None) != 3:
                 continue
@@ -467,7 +670,7 @@ def compute_and_save(
                 for j in range(n_imgs):
                     start_idx = j * 3
                     end_idx = start_idx + 3
-                    x = torch.tensor(mlic_test_arr[:, start_idx:end_idx, :, :].copy()).to(device)
+                    x = torch.tensor(mlic_test_arr[:, start_idx:end_idx, :, :].copy()).to(device, dtype=getattr(torch, dm_mlic.dtype_str))
                     with torch.no_grad():
                         rv = net(x,season_idx,sst_test_norm)
                     bits = compute_total_bits(rv)
@@ -477,6 +680,9 @@ def compute_and_save(
                     total_elements += numel
                     total_original_bits += original_bits
                     reconstructed_arr[:, start_idx:end_idx] = rv['x_hat'].detach().cpu().numpy()
+
+                if np.mean(reconstructed_arr[:,-1])==0:
+                    reconstructed_arr[:,-1] = reconstructed_arr[:,-2]
                 bpe = total_bits / total_elements
                 cr = total_original_bits / total_bits
                 if len(ckpt_files) > 1:
@@ -489,17 +695,18 @@ def compute_and_save(
                     dict_model_name = model_name.split('_min_max')[0] + sub_name
                 bit_rates.setdefault(dict_model_name, {})[cr] = {'bits_per_element': bpe, 'compression_rate': cr, 'total_compressed_bits': total_bits, 'total_original_bits': total_original_bits, 'model_config': f'N={N}, M={M}', 'original_model_name': model_name}
                 
-                
-
-                reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
+                reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, test_norm)
                 augmented_da[:] = reconstructed_arr
-
+                # Interpolate per batch
                 test_ssp_arr = augmented_da.interp(
-                lat=test_ssp_da.lat,
-                lon=test_ssp_da.lon,
-                method="nearest"
+                    lat=test_coords['lat'],
+                    lon=test_coords['lon'],
+                    method="nearest"
                 ).data
-                
+
+                b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
+                test_ssp_arr = filtfilt(b, a, test_ssp_arr, axis=1).astype(metric_datatest.dtype)
+
 
                 model_metrics.setdefault(dict_model_name, {})
                 data_dict.setdefault(dict_model_name, {})
@@ -507,16 +714,16 @@ def compute_and_save(
                 model_metrics[dict_model_name][cr] = metrics
                 # selection
                 data_dict[dict_model_name][cr] = {}
-                for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
+                for metric_name in ["RMSE", "F1_score", "ECS", "R2"]:
                     data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, test_ssp_arr, depth_array, metric_name)
                 
                 data_dict[dict_model_name][cr]['selected'] = {
-                    't_lat': ((t_idx, lat_idx),  test_ssp_arr[t_idx, :, lat_idx, :]),
-                    't_lat_lon': ((t_idx, lat_idx, lon_idx), test_ssp_arr[t_idx, :, lat_idx, lon_idx])
+                    't_lat': ((t_idx, lat_idx), metric_datatest[t_idx, :, lat_idx, :], test_ssp_arr[t_idx, :, lat_idx, :].copy()),
+                    't_lat_lon': ((t_idx, lat_idx, lon_idx), metric_datatest[t_idx, :, lat_idx, lon_idx], test_ssp_arr[t_idx, :, lat_idx, lon_idx].copy())
                 }
 
-                metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
-                model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
+                # metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
+                # model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
 
             except Exception as e:
                 print(e)
@@ -526,7 +733,8 @@ def compute_and_save(
     # runs inference in the same triple-channel loop as the RGB MLIC above,
     # and registers the outputs and bitrate info under the name 'original_mlicc'.
     orig_mlicc_ckpt = "/Odyssey/private/o23gauvr/code/MLIC/checkpoints/mlicpp_mse_q5_2960000.pth.tar"
-    if MLICPlusPlus is not None and Path(orig_mlicc_ckpt).exists():
+    if MLICPlusPlus is not None and Path(orig_mlicc_ckpt).exists() and orig_mlicc_ckpt != "":
+        
         if verbose:
             print(f'Loading original MLICC checkpoint from {orig_mlicc_ckpt}')
         try:
@@ -545,7 +753,7 @@ def compute_and_save(
             state = ck.get('state_dict', ck) if isinstance(ck, dict) else ck
             rgb_mlic_net.load_state_dict(state)
 
-            reconstructed_arr = np.zeros(mlic_test_arr.shape)
+            reconstructed_arr = np.zeros(mlic_test_arr.shape,dtype=mlic_test_arr.dtype)
             total_bits = 0
             total_elements = 0
             total_original_bits = 0
@@ -553,6 +761,7 @@ def compute_and_save(
             for j in range(n_imgs):
                 start_idx = j * 3
                 end_idx = start_idx + 3
+
                 x = torch.tensor(mlic_test_arr[:, start_idx:end_idx, :, :].copy()).to(device=device, dtype=getattr(torch, dm_mlic.dtype_str))
                 with torch.no_grad():
                     rv = rgb_mlic_net(x)
@@ -563,6 +772,8 @@ def compute_and_save(
                 total_elements += numel
                 total_original_bits += original_bits
                 reconstructed_arr[:, start_idx:end_idx] = rv['x_hat'].detach().cpu().numpy()
+            if np.mean(reconstructed_arr[:,-1])==0:
+                reconstructed_arr[:,-1] = reconstructed_arr[:,-2]
             bpe = total_bits / total_elements if total_elements > 0 else 0
             cr = total_original_bits / total_bits if total_bits > 0 else float('inf')
             dict_model_name = 'MLIC++ original' if unique_name else 'original_mlicc'
@@ -577,15 +788,18 @@ def compute_and_save(
 
             
 
-            reconstructed_arr = utils.unorm_ssp_arr_3D(reconstructed_arr, dm_mlic)
+            reconstructed_arr =unorm_ssp_arr_3D(reconstructed_arr, test_norm)
             augmented_da[:] = reconstructed_arr
             
             test_ssp_arr = augmented_da.interp(
-            lat=test_ssp_da.lat,
-            lon=test_ssp_da.lon,
+            lat=test_coords['lat'],
+            lon=test_coords['lon'],
             method="nearest"
             ).data
-                
+
+            b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
+            test_ssp_arr = filtfilt(b, a, test_ssp_arr, axis=1).astype(metric_datatest.dtype)
+
 
             model_metrics.setdefault(dict_model_name, {})
             data_dict.setdefault(dict_model_name, {})
@@ -593,16 +807,16 @@ def compute_and_save(
             model_metrics[dict_model_name][cr] = metrics
             # selection
             data_dict[dict_model_name][cr] = {}
-            for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
+            for metric_name in ['RMSE', 'F1_score', 'ECS', 'R2']:
                 data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, test_ssp_arr, depth_array, metric_name)
             
             data_dict[dict_model_name][cr]['selected'] = {
-                't_lat': ((t_idx, lat_idx), test_ssp_arr[t_idx, :, lat_idx, :]),
-                't_lat_lon': ((t_idx, lat_idx, lon_idx), test_ssp_arr[t_idx, :, lat_idx, lon_idx])
+                't_lat': ((t_idx, lat_idx), metric_datatest[t_idx, :, lat_idx, :], test_ssp_arr[t_idx, :, lat_idx, :].copy()),
+                't_lat_lon': ((t_idx, lat_idx, lon_idx), metric_datatest[t_idx, :, lat_idx, lon_idx], test_ssp_arr[t_idx, :, lat_idx, lon_idx].copy())
             }
 
-            metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
-            model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
+            # metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], test_ssp_arr[:, :-1, ...], depth_array[:-1])
+            # model_metrics.setdefault(f'cutted_{dict_model_name}', {})[cr] = metrics_cut
 
         except Exception as e:
             if verbose:
@@ -616,56 +830,158 @@ def compute_and_save(
     if verbose:
         print(f'Found {len(ckpt_dict)} model directories under {other_ckpt_base}')
     for i, model_carac in tqdm(enumerate(ckpt_dict.keys()), desc='Models', disable=not verbose):
-
+        
 
         ckpt_list = list(Path(ckpt_dict[model_carac]).rglob('*.ckpt'))
+        #ckpt_list += list(Path(ckpt_dict[model_carac]).rglob('*.tar'))
+
         target_name = 'CAE' if unique_name else model_carac
-        bit_rates.setdefault(target_name, {})
+        #bit_rates.setdefault(target_name, {})
         for ckpt_path in ckpt_list:
+            if unique_name:
+                target_name = 'CAE'
+            else:
+                target_name = str(ckpt_path).split('/')[-3] + "_" + str(ckpt_path).split('/')[-1]
+            bit_rates.setdefault(target_name, {})
             if verbose:
-                print(f'  Loading model checkpoint: {ckpt_path}')
+                print(f'Loading model checkpoint: {ckpt_path}')
             try:
                 cfg = utils.get_cfg_from_ckpt_path(str(ckpt_path), pprint=False)
             except Exception:
                 if verbose:
-                    print(f'    Could not get config for {ckpt_path}, skipping')
+                    print(f'Could not get config for {ckpt_path}, skipping')
                 continue
+
             try:
-                lit_model = utils.load_model(str(ckpt_path), dm_cae, cae_test_tens, verbose=False)
+                ck = torch.load(ckpt_path, map_location=device)
+                test_norm = ck.get('norm_stats', None)
+                test_norm_method = test_norm['method']
+            except:
+                test_norm = cae_test_ds.attrs['norm_stats'].copy()
+                test_norm_method = "mean_std_along_depth"
+
+            # Create fresh normalized copy for this checkpoint (avoid modifying shared array)
+            cae_test_ssp_arr = cae_test_ssp_arr_unnorm.copy()
+            if test_norm_method == "min_max":
+                x_min = test_norm["params"]["x_min"].astype(cae_test_ssp_arr.dtype)
+                x_max = test_norm["params"]["x_max"].astype(cae_test_ssp_arr.dtype)
+                cae_test_ssp_arr = (cae_test_ssp_arr - x_min) / (x_max - x_min)
+            elif test_norm_method == "mean_std":
+                mean = test_norm['params']["mean"].astype(cae_test_ssp_arr.dtype)
+                std = test_norm['params']["std"].astype(cae_test_ssp_arr.dtype)
+                cae_test_ssp_arr = (cae_test_ssp_arr - mean) / std
+            elif test_norm_method == "mean_std_along_depth":
+                mean = test_norm['params']["mean_along_depth"].astype(cae_test_ssp_arr.dtype)
+                std = test_norm['params']["std_along_depth"].astype(cae_test_ssp_arr.dtype)
+                cae_test_ssp_arr = (cae_test_ssp_arr - mean) / std
+
+            # Load model using a single sample to initialize
+            sample_tens = torch.tensor(cae_test_ssp_arr[:1], device=device, dtype=getattr(torch, dm_cae.dtype_str))
+            
+            try:
+                lit_model = utils.load_model(str(ckpt_path), dm_cae, sample_tens, verbose=False)
             except Exception:
                 if verbose:
-                    print(f'    Could not load model {ckpt_path}, skipping')
+                    print(f'Could not load model {ckpt_path}, skipping')
                 continue
-            ssp_ae_test_arr = lit_model(cae_test_tens).detach().cpu().numpy().astype(getattr(np, dm_cae.dtype_str))
-            cr = lit_model.model_AE.cr
-            bpe = lit_model.model_AE.bpe
-            total_bits = lit_model.model_AE.total_bits
-            if dm_cae.norm_stats.get('norm_location', '') == 'datamodule':
-                ssp_ae_test_arr = utils.unorm_ssp_arr_3D(ssp_ae_test_arr, dm_cae)
+
+            # Run model and compute metrics over batches
+            ssp_ae_test_arr = np.zeros_like(cae_test_ssp_arr)
+            n_batch = int(np.ceil(len(cae_test_ssp_arr) / batch_size))
+            total_bits = 0
+            total_elements = 0
+            batch_metrics = []
+
+            for b_idx in range(n_batch):
+                start_idx = b_idx * batch_size
+                end_idx = min((b_idx + 1) * batch_size, len(cae_test_ssp_arr))
+                x_batch = torch.tensor(cae_test_ssp_arr[start_idx:end_idx].copy(), device=device, dtype=getattr(torch, dm_cae.dtype_str))
+                
+                with torch.no_grad():
+                    batch_output = lit_model(x_batch)
+                
+                batch_recon = batch_output.detach().cpu().numpy().astype(getattr(np, dm_cae.dtype_str))
+                
+                # Free GPU memory immediately
+                del x_batch, batch_output
+                torch.cuda.empty_cache()
+                
+                # Unnormalize per batch if needed
+                if dm_cae.norm_stats.get('norm_location', '') == 'datamodule':
+                    batch_recon = unorm_ssp_arr_3D(batch_recon, test_norm)
+                
+                b, a = butter(N=2, Wn=0.16, btype='low', analog=False)
+                batch_recon = filtfilt(b, a, batch_recon, axis=1).astype(metric_datatest.dtype)
+
+                ssp_ae_test_arr[start_idx:end_idx] = batch_recon
+                
+                # Accumulate bits info from model
+                if hasattr(lit_model.model_AE, 'total_bits'):
+                    total_bits += lit_model.model_AE.total_bits
+                total_elements += batch_recon.size
+
+                # Compute metrics per batch
+                batch_truth = metric_datatest[start_idx:end_idx]
+                batch_metrics.append(compute_metrics_for_arrays(batch_truth, batch_recon, depth_array))
+                
+                # Free batch memory
+                del batch_recon, batch_truth
+            
+            # Free sample tensor used for initialization
+            del sample_tens
+
+            # Get compression info from model
+            cr = lit_model.model_AE.cr if hasattr(lit_model.model_AE, 'cr') else 1.0
+            bpe = lit_model.model_AE.bpe if hasattr(lit_model.model_AE, 'bpe') else 0.0
+            if total_bits == 0 and hasattr(lit_model.model_AE, 'total_bits'):
+                total_bits = lit_model.model_AE.total_bits
+
             # store bit rate info
             bit_rates[target_name][cr] = {'bits_per_element': bpe, 'compression_rate': cr, 'total_compressed_bits': total_bits}
-            # compute metrics immediately and store small selected examples to avoid keeping full arrays
+            
+            # Average metrics across batches
             try:
                 model_metrics.setdefault(target_name, {})
                 data_dict.setdefault(target_name, {})
-                metrics = compute_metrics_for_arrays(metric_datatest, ssp_ae_test_arr, depth_array)
-                model_metrics[target_name][cr] = metrics
+                
+                mean_metrics = {"full_path": str(ckpt_path)}
+                for k in batch_metrics[0].keys():
+                    vals = [bm[k] for bm in batch_metrics]
+                    mean_metrics[k] = float(np.mean(vals))
+                
+                model_metrics[target_name][cr] = mean_metrics
+                
                 # selection
                 data_dict[target_name][cr] = {}
-                for metric_name in []: #'RMSE', 'F1_score', 'ECS', 'R2
+                for metric_name in ['RMSE', 'F1_score', 'ECS', 'R2']: #'RMSE', 'F1_score', 'ECS', 'R2_score'
                     data_dict[target_name][cr][metric_name] = get_best_worst_random(metric_datatest, ssp_ae_test_arr, depth_array, metric_name)
                 t_idx, lat_idx, lon_idx = 15, 101, 81
                 data_dict[target_name][cr]['selected'] = {
-                    't_lat': ((t_idx, lat_idx), ssp_ae_test_arr[t_idx, :, lat_idx, :]),
-                    't_lat_lon': ((t_idx, lat_idx, lon_idx), ssp_ae_test_arr[t_idx, :, lat_idx, lon_idx])
+                    't_lat': ((t_idx, lat_idx), metric_datatest[t_idx, :, lat_idx, :], ssp_ae_test_arr[t_idx, :, lat_idx, :].copy()),  # .copy() to avoid keeping ref
+                    't_lat_lon': ((t_idx, lat_idx, lon_idx), metric_datatest[t_idx, :, lat_idx, lon_idx], ssp_ae_test_arr[t_idx, :, lat_idx, lon_idx].copy()),
+                    'full_path': str(ckpt_path)
                 }
 
-                metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], ssp_ae_test_arr[:, :-1, ...], depth_array[:-1])
-                model_metrics.setdefault(f'cutted_{target_name}', {})[cr] = metrics_cut
+                # metrics_cut = compute_metrics_for_arrays(metric_datatest[:, :-1, ...], ssp_ae_test_arr[:, :-1, ...], depth_array[:-1])
+                # model_metrics.setdefault(f'cutted_{target_name}', {})[cr] = metrics_cut
 
             except Exception as e:
                 if verbose:
                     print(f'Failed to compute metrics/selection for CAE {ckpt_path}: {e}')
+            finally:
+                # Memory cleanup after each CAE checkpoint
+                if 'lit_model' in dir():
+                    del lit_model
+                if 'ssp_ae_test_arr' in dir():
+                    del ssp_ae_test_arr
+                if 'batch_metrics' in dir():
+                    del batch_metrics
+                if 'cae_test_ssp_arr' in dir():
+                    del cae_test_ssp_arr
+                if 'ck' in dir():
+                    del ck
+                torch.cuda.empty_cache()
+                gc.collect()
 
     # (selection helper already defined above and used for CAE and MLIC models)
 
@@ -680,32 +996,31 @@ def compute_and_save(
     # Save outputs
     out_dir = Path(out_pickle_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / 'model_metrics_icassp_corrected.pkl', 'wb') as f:
+    with open(out_dir / 'model_metrics_enatl_test.pkl', 'wb') as f:
         pickle.dump(model_metrics, f)
-    with open(out_dir / 'data_dict_icassp_corrected.pkl', 'wb') as f:
+    with open(out_dir / 'data_dict_enatl_test.pkl', 'wb') as f:
         pickle.dump(data_dict, f)
     print(f'Saved model_metrics and data_dict to {out_dir}')
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument('--dm-mlic-pkl', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_4_157_196_256.pkl')
-    p.add_argument('--dm-cae-pkl', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/dm_enatl_mean_std_along_depth_4_157_240_240.pkl')
-    p.add_argument('--mlic-base-dir', default="/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#'/Odyssey/private/o23gauvr/code/MLIC/experiments') #'/Odyssey/private/o23gauvr/code/MLIC/experiments')  #'/Odyssey/private/o23gauvr/code/MLIC/experiments')#'/Odyssey/private/o23gauvr/code/MLIC/experiments/keep')
-    p.add_argument('--other-ckpt-base', default="/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE") #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE') #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE' #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE_visu_icassp")#
+    p.add_argument('--dm-mlic-pkl', default="/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_good_split.pkl") #enatl_dm_157_196_256_good_split #  #"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_good_split.pkl")
+    p.add_argument('--dm-cae-pkl', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_141_240_good_split.pkl')#)
+    p.add_argument('--mlic-base-dir', default="/Odyssey/private/o23gauvr/code/FASCINATION/outputs/Tensorboard/")#"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/Tensorboard")#"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/")#/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/    #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/test/MLIC #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#'/Odyssey/private/o23gauvr/code/MLIC/experiments') #'/Odyssey/private/o23gauvr/code/MLIC/experiments')  #'/Odyssey/private/o23gauvr/code/MLIC/experiments')#'/Odyssey/private/o23gauvr/code/MLIC/experiments/keep')
+    p.add_argument('--other-ckpt-base', default="") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE") #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE') #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE' #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE_visu_icassp")#
     p.add_argument('--out-pickle-dir', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle')
     p.add_argument('--device', default='cuda')
     p.add_argument('--verbose', action='store_true', default=True, help='Enable verbose prints and progress bars')
-    p.add_argument('--unique-name', action='store_true', default=True, help='Use unique names for MLIC++ models (no hyperparam details)')
+    p.add_argument('--unique-name', action='store_true', default=False, help='Use unique names for MLIC++ models (no hyperparam details)')
     return p.parse_args()
 
 
-def main(test_ssp_arr: np.ndarray = None):
+def main():
     args = parse_args()
     compute_and_save(
         args.dm_mlic_pkl,
         args.dm_cae_pkl,
-        test_ssp_arr,
         args.mlic_base_dir,
         args.other_ckpt_base,
         args.out_pickle_dir,
@@ -717,23 +1032,23 @@ def main(test_ssp_arr: np.ndarray = None):
 
 if __name__ == '__main__':
 
-    with open("/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_4_157_196_256.pkl", "rb") as f_rgb:
-        dm_mlic = pickle.load(f_rgb)
+    # with open("/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_157_196_256.pkl", "rb") as f_rgb:
+    #     dm_mlic = pickle.load(f_rgb)
 
-    x_min,x_max = dm_mlic.norm_stats['params'].values()
-    season_idx = dm_mlic.test_da.season_idx
+    # x_min,x_max = dm_mlic.norm_stats['params'].values()
+    # season_idx = dm_mlic.test_ds.input.season_idx
 
-    natl_test_data = xr.open_dataarray("/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc").isel(time=season_idx)
-    max_depth = 2000
-    # Drop all lat coordinates presenting a nan for depths (z) inferior to 2000
-    # Select only data for depths < 2000
-    sub_da = natl_test_data.sel(z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True))
-    # For each lat, check if there is any nan across time, z, and lon
-    lat_nan = sub_da.isnull().any(dim=["time", "z", "lon"])
-    # Get valid latitudes (i.e. where there is no nan)
-    valid_lats = lat_nan.where(lat_nan == False, drop=True).coords["lat"].values
-    # Select only the valid latitudes and drop all z coordinates superior to 2000.
-    natl_test_data = natl_test_data.sel(lat=valid_lats, z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True)).astype(getattr(np, dm_mlic.dtype_str))
+    # natl_test_data = xr.open_dataarray("/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc").isel(time=season_idx)
+    # max_depth = 2000
+    # # Drop all lat coordinates presenting a nan for depths (z) inferior to 2000
+    # # Select only data for depths < 2000
+    # sub_da = natl_test_data.sel(z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True))
+    # # For each lat, check if there is any nan across time, z, and lon
+    # lat_nan = sub_da.isnull().any(dim=["time", "z", "lon"])
+    # # Get valid latitudes (i.e. where there is no nan)
+    # valid_lats = lat_nan.where(lat_nan == False, drop=True).coords["lat"].values
+    # # Select only the valid latitudes and drop all z coordinates superior to 2000.
+    # natl_test_data = natl_test_data.sel(lat=valid_lats, z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True)).astype(getattr(np, dm_mlic.dtype_str))
 
 
-    main(natl_test_data)
+    main()

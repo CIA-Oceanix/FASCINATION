@@ -1,11 +1,16 @@
+import sys
+from tabnanny import verbose
 import pytorch_lightning as pl
 import xarray as xr
 import numpy as np
+import random
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 import torch.utils.data
 from collections import namedtuple
+from typing import Union, Tuple, List
 import torch
 import pandas as pd
+import pickle
 
 TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
 
@@ -20,8 +25,14 @@ def month_to_season(month):
     else:
         return 3  # Fall
 
+def _seed_worker(worker_id):
+    """Seed numpy/random in each DataLoader worker for reproducibility."""
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
-class AutoEncoderDatamodule_3D(pl.LightningDataModule):
+
+class AEDatamodule(pl.LightningDataModule):
     """
     Datamodule that accepts separate train_da and test_da (xarray.DataArray).
     Both DAs are processed independently for nan management, factor_64 reshape, rgb depth_layers,
@@ -31,16 +42,15 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
 
     def __init__(
         self,
-        train_da: xr.DataArray,
-        test_da: xr.DataArray,
         dl_kw,
         norm_stats,
+        test_norm: str = "on_train",
         manage_nan: str = "supress_with_max_depth",
-        n_profiles: int = None,
         reshape=None,
         rgb={"use": False, "method": None},
         dtype_str='float32',
         space_ratio_init: float = 0.2,
+        shuffle: bool = True,
         seed: int = 42,
     ):
         """
@@ -64,30 +74,52 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
             numpy dtype string, e.g. 'float32'
         """
         super().__init__()
-        self.train_da_orig = train_da
-        self.test_da_orig = test_da
+
+        data_path ={"enatl": "/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc",
+                    "natl": "/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc"}
+        
+        sst_path = {"enatl": "/Odyssey/public/enatl60/sst/eNATL60-BLB002-SST-2009-2010-1_20.nc",
+                    "natl": "/Odyssey/public/natl60/sst/NATL60-CJM165-SST-2009-2010-1_20.nc"}
+
+        self.train_da = xr.open_dataarray(data_path['enatl'])
+        self.val_da=None
+        self.test_da = xr.open_dataarray(data_path['natl'])
+
+        self.train_sst = xr.open_dataarray(sst_path['enatl'])
+        self.test_sst = xr.open_dataarray(sst_path['natl'])
+
         self.dl_kw = dl_kw
         self.norm_stats = norm_stats
+        self.test_norm = test_norm
+        self.test_norm_stats = {"method": norm_stats.get("method", None), "params": None}
         self.rgb = rgb
         self.manage_nan = manage_nan
-        self.n_profiles = n_profiles
+        self.n_profiles = None
+        self.train_time_ratio = 1.0
+        self.val_time_ratio = 0.5
+        self.test_time_ratio = 0.5
         self.reshape = [] if reshape is None else reshape
         self.dtype_str = dtype_str
         self.space_ratio = space_ratio_init
         self.time_ratio = 0.1
         self.seed = seed
+        self.shuffle = shuffle
+
+        self.depth_array = None
 
         # internal placeholders filled in setup
-        self.train_da = None
-        self.test_da = None
         self.train_ds = None
+        self.val_ds = None
         self.test_ds = None
         self.drop_last_batch = False
-        self.is_data_normed = False
+
+        self.verbose = True
 
         # if rgb is requested, enforce min_max norm method for consistency (same behavior as before)
         if self.rgb["use"]:
             self.norm_stats["method"] = "min_max"
+
+
 
     def _ensure_dtype(self, da: xr.DataArray):
         required_dtype = getattr(np, self.dtype_str)
@@ -119,34 +151,118 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
             # unknown option: no-op
             return da
 
-    def _spatio_temporal_subsample(self, da: xr.DataArray):
-        """Attempt to respect n_profiles by subsampling time/space similar to original logic, applied per-DA."""
-        if self.n_profiles is None:
-            return da
+    # def _spatio_temporal_subsample(self, da: xr.DataArray, n_profiles):
+    #     """Attempt to respect n_profiles by subsampling time/space similar to original logic, applied per-DA."""
+    #     if n_profiles is None:
+    #         return da
 
-        time_size = len(da.time)
-        lat_size = len(da.lat)
-        lon_size = len(da.lon)
+    #     time_size = len(da.time)
+    #     lat_size = len(da.lat)
+    #     lon_size = len(da.lon)
 
-        # adapt space_ratio so we get a reasonable time_factor similar to original behavior
-        while True:
-            space_factor = max(1, int(round(1 / self.space_ratio)))
-            time_factor = max(
-                1,
-                int(time_size * np.ceil(lat_size / space_factor) * np.ceil(lon_size / space_factor)) // max(1, self.n_profiles)
-            )
-            if time_factor <= time_size / 10:
-                break
-            self.space_ratio *= 0.5
-            # if space_ratio becomes tiny, break to avoid infinite loop
-            if self.space_ratio < 1e-6:
-                break
+    #     # adapt space_ratio so we get a reasonable time_factor similar to original behavior
+    #     while True:
+    #         space_factor = max(1, int(round(1 / self.space_ratio)))
+    #         time_factor = max(
+    #             1,
+    #             int(time_size * np.ceil(lat_size / space_factor) * np.ceil(lon_size / space_factor)) // max(1, self.n_profiles)
+    #         )
+    #         if time_factor <= time_size / 10:
+    #             break
+    #         self.space_ratio *= 0.5
+    #         # if space_ratio becomes tiny, break to avoid infinite loop
+    #         if self.space_ratio < 1e-6:
+    #             break
 
-        # apply subsampling
-        lat_slice = slice(0, None, space_factor)
-        lon_slice = slice(0, None, space_factor)
-        time_slice = slice(0, None, max(1, int(time_factor)))
-        return da.isel(time=time_slice, lat=lat_slice, lon=lon_slice)
+    #     # apply subsampling
+    #     lat_slice = slice(0, None, space_factor)
+    #     lon_slice = slice(0, None, space_factor)
+    #     time_slice = slice(0, None, max(1, int(time_factor)))
+    #     return da.isel(time=time_slice, lat=lat_slice, lon=lon_slice)
+
+    # def _select_days(self, da: xr.DataArray, days_ratio=None):
+    #     if days_ratio is None:
+    #         return da
+    #     # Implement logic to select n_days from the DataArray
+    #     # Placeholder: select first n_days
+    #     step = int(1/days_ratio)
+    #     return da.isel(time=slice(0, None, step))
+
+
+    def _split_da_along_time(
+        self,
+        da: xr.DataArray,
+        days_ratio: Union[float, Tuple[float, ...]],
+        n_gap: int = 7,
+    ) -> Union[xr.DataArray, List[xr.DataArray]]:
+        """
+        Subsample or split a DataArray along the time dimension.
+
+        Parameters
+        ----------
+        da : xr.DataArray
+            Input data with a 'time' dimension.
+        days_ratio : float or tuple of floats
+            - float: subsample time with step = int(1 / days_ratio)
+            - tuple: return len(days_ratio) contiguous blocks whose sizes
+                    are proportional to the ratios and separated by n_gap
+        n_gap : int
+            Number of timesteps separating consecutive blocks
+
+        Returns
+        -------
+        xr.DataArray or list[xr.DataArray]
+        """
+
+        if "time" not in da.dims:
+            raise ValueError("DataArray must have a 'time' dimension")
+
+        # ------------------------------------------------------------------
+        # Case 1 — simple subsampling
+        # ------------------------------------------------------------------
+        if isinstance(days_ratio, float):
+            if not (0 < days_ratio <= 1):
+                raise ValueError("days_ratio must be in [0, 1]")
+            step = int(1 / days_ratio)
+            return da.isel(time=slice(0, None, step))
+
+        # ------------------------------------------------------------------
+        # Case 2 — contiguous block splits with gaps
+        # ------------------------------------------------------------------
+        if isinstance(days_ratio, tuple):
+            ratios = list(days_ratio)
+            n_sets = len(ratios)
+
+            if any(r <= 0 for r in ratios):
+                raise ValueError("All ratios must be positive")
+
+            T = da.sizes["time"]
+            T_eff = T - (n_sets - 1) * n_gap
+
+            if T_eff <= 0:
+                raise ValueError("n_gap too large for dataset length")
+
+            # normalize ratios
+            ratio_sum = sum(ratios)
+            ratios = [r / ratio_sum for r in ratios]
+
+            # block sizes
+            block_sizes = [int(T_eff * r) for r in ratios]
+
+            # ensure exact coverage (last block absorbs rounding)
+            block_sizes[-1] += T_eff - sum(block_sizes)
+
+            splits = []
+            start = 0
+
+            for size in block_sizes:
+                end = start + size
+                splits.append(da.isel(time=slice(start, end)))
+                start = end + n_gap
+
+            return splits
+
+        raise TypeError("days_ratio must be a float or a tuple of floats")
 
     def _factor_64_pad_interp(self, da: xr.DataArray):
         """If 'factor_64' in reshape: interpolate lat/lon so sizes are multiples of 64.
@@ -210,32 +326,36 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
         )
         return new_da
 
-    def _get_train_norm_stats(self, train_arr: np.array, verbose=False):
+    def _get_train_norm_stats(self, arr: np.array, norm_stats, verbose=False):
         """Compute norm stats from numpy array train_arr (numpy array)."""
-        self.norm_stats["params"] = {}
-        method = self.norm_stats.get('method', None)
-        if method == "mean_std":
-            self.norm_stats["params"]["mean"] = np.nanmean(train_arr)
-            self.norm_stats["params"]["std"] = np.nanstd(train_arr)
-        elif method == "mean_std_along_depth":
+
+        norm_stats['params'] = {}
+
+        # method = self.norm_stats.get('method', None)
+        # if method == "mean_std":
+        norm_stats["params"]["mean"] = np.nanmean(arr)
+        norm_stats["params"]["std"] = np.nanstd(arr)
+
+        #elif method == "mean_std_along_depth":
             # mean/std along (time,lat,lon) per depth
             # Expect train_arr shape: (time, z, lat, lon)
-            self.norm_stats["params"]["mean"] = np.nanmean(train_arr, axis=(0, 2, 3)).reshape(1, -1, 1, 1)
-            self.norm_stats["params"]["std"] = np.nanstd(train_arr, axis=(0, 2, 3)).reshape(1, -1, 1, 1)
-        elif method == "min_max":
-            self.norm_stats["params"]["x_min"] = np.nanmin(train_arr)
-            self.norm_stats["params"]["x_max"] = np.nanmax(train_arr)
-        else:
-            raise RuntimeError(f"Unknown normalization method: {method}")
+        norm_stats["params"]["mean_along_depth"] = np.nanmean(arr, axis=(0, 2, 3)).reshape(1, -1, 1, 1)
+        norm_stats["params"]["std_along_depth"] = np.nanstd(arr, axis=(0, 2, 3)).reshape(1, -1, 1, 1)
+                                                             
+        #elif method == "min_max":
+        norm_stats["params"]["x_min"] = np.nanmin(arr)
+        norm_stats["params"]["x_max"] = np.nanmax(arr)
+        # else:
+        #     raise RuntimeError(f"Unknown normalization method: {method}")
 
         if verbose:
-            print("Norm stats", self.norm_stats)
-        return self.norm_stats
+            print("Norm stats", norm_stats)
 
-    def _apply_normalization_to_data(self, data: np.ndarray):
+
+    def _apply_normalization_to_data(self, data: np.ndarray, norm_stats=None):
         """Apply normalization in-place to numpy array data. Expected shapes: (time,z,lat,lon) or similar."""
-        method = self.norm_stats.get("method", None)
-        params = self.norm_stats.get("params", None)
+        method = norm_stats.get("method", None)
+        params = norm_stats.get("params", None)
         if params is None:
             raise RuntimeError("Normalization params not computed yet (call get_train_norm_stats first)")
 
@@ -248,45 +368,86 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
             std = params["std"]
             return (data - mean) / std
         elif method == "mean_std_along_depth":
-            mean = params["mean"]
-            std = params["std"]
+            mean = params["mean_along_depth"]
+            std = params["std_along_depth"]
             return (data - mean) / std
         else:
             raise RuntimeError(f"Unknown normalization method: {method}")
+
+    def _attach_sst(self, train_da: xr.DataArray, val_da: xr.DataArray, test_da: xr.DataArray):
+
+        train_sst = self.train_sst.sel(time=train_da.time).astype(getattr(np, self.dtype_str))
+        val_sst = self.test_sst.sel(time=val_da.time).astype(getattr(np, self.dtype_str))
+        test_sst = self.test_sst.sel(time=test_da.time).astype(getattr(np, self.dtype_str))
+        
+        train_sst = train_sst.interp_like(train_da)
+        val_sst = val_sst.interp_like(val_da)
+        test_sst = test_sst.interp_like(test_da)
+
+        # Compute mean and std from train SST
+        sst_mean = train_sst.mean()
+        sst_std = train_sst.std()
+
+        # Normalize SST arrays
+        train_sst = (train_sst - sst_mean) / sst_std
+        val_sst = (val_sst - sst_mean) / sst_std
+        test_sst = (test_sst - sst_mean) / sst_std
+
+        train_da.attrs['sst'] = train_sst
+        val_da.attrs['sst'] = val_sst
+        test_da.attrs['sst'] = test_sst
+
+        return train_da, val_da, test_da
+
+
 
     def setup(self, stage=None):
         """
         stage is ignored in this simplified DM: we process train and test when setup is called.
         """
-        # Ensure dtypes for originals
-        self.train_da_orig = self._ensure_dtype(self.train_da_orig)
-        self.test_da_orig = self._ensure_dtype(self.test_da_orig)
+        required_dtype = getattr(np, self.dtype_str)
 
         # Work on copies to avoid modifying user-provided DAs
-        train_da = self.train_da_orig.copy()
-        test_da = self.test_da_orig.copy()
+        train_da = self.train_da.copy().astype(required_dtype)
+        test_da = self.test_da.copy().astype(required_dtype)
 
-        # Save original_data attribute separately per DA
-        train_da.attrs["original_data"] = train_da.copy()
-        test_da.attrs["original_data"] = test_da.copy()
+        # # Ensure dtypes for originals
+        # if self.verbose:
+        #     print("Ensuring dtypes for train/test DAs...")
+        # self.train_da = self._ensure_dtype(train_da)
+        # self.test_da = self._ensure_dtype(test_da)
+
+        # # Save original_data attribute separately per DA
+        # train_da.attrs["original_data"] = train_da.copy()
+        # test_da.attrs["original_data"] = test_da.copy()
 
         # 1) NAN management per DA
+        if self.verbose:
+            print("Managing NaNs for train/test DAs...")
         train_da = self._manage_nan_single_da(train_da)
         test_da = self._manage_nan_single_da(test_da)
+
+        self.depth_array = train_da.z.values.copy()
 
         # After nan management, ensure depth coords exist and are comparable (we only require same depth axis semantics)
         # We do NOT force lat/lon alignment between train/test.
 
-        # 2) spatio-temporal subsample based on n_profiles (per DA)
-        train_da = self._spatio_temporal_subsample(train_da)
-        test_da = self._spatio_temporal_subsample(test_da)
+        train_lat_lon = {'lat': train_da.lat.copy(), 'lon': train_da.lon.copy()}
+        val_lat_lon = {'lat': test_da.lat.copy(), 'lon': test_da.lon.copy()}
+        test_lat_lon = {'lat': test_da.lat.copy(), 'lon': test_da.lon.copy()}
+
 
         # 3) factor_64 interpolation separately per DA
+        if self.verbose:
+            print("Applying factor_64 padding/interpolation for train/test DAs...")
         train_da = self._factor_64_pad_interp(train_da)
         test_da = self._factor_64_pad_interp(test_da)
 
         # 4) rgb depth_layers option (applied per DA)
+
         if self.rgb.get("use", False):
+            if self.verbose:
+                print("Applying RGB depth_layers method for train/test DAs")
             if self.rgb.get("method") == "depth_layers":
                 train_da = self._rgb_depth_layers(train_da)
                 test_da = self._rgb_depth_layers(test_da)
@@ -298,58 +459,115 @@ class AutoEncoderDatamodule_3D(pl.LightningDataModule):
         # prepare train numpy array for stats: ensure shape (time, z, lat, lon)
         train_arr = train_da.data  # numpy ndarray
         # if there are NaNs remaining, keep nan-aware stats
+        if self.verbose:
+            print("Computing normalization stats from train DA...")
         if self.norm_stats.get("params") is None or any(v is None for v in (self.norm_stats.get("params") or {}).values()):
-            self._get_train_norm_stats(train_arr)
-
+            self._get_train_norm_stats(train_arr, self.norm_stats, verbose=False)
+        if self.test_norm == "on_train":
+            self.test_norm_stats = self.norm_stats
+        elif self.test_norm == "on_test":
+            self._get_train_norm_stats(test_da.data, self.test_norm_stats, verbose=False)
         # 6) apply normalization to both DAs (use same params)
-        train_data_normed = self._apply_normalization_to_data(train_da.data)
-        test_data_normed = self._apply_normalization_to_data(test_da.data)
+        if self.verbose:
+            print("Applying normalization to train/test DAs...")
+        train_arr = self._apply_normalization_to_data(train_da.data, self.norm_stats)
+        test_arr = self._apply_normalization_to_data(test_da.data, self.test_norm_stats)
+
+        # 2) spatio-temporal subsample based on n_profiles (per DA)
+        train_da[:] = train_arr
+        test_da[:] = test_arr
+        if self.verbose:
+            print("Selecting days for train/test DAs...")
+        train_da = self._split_da_along_time(train_da, days_ratio=self.train_time_ratio)
+        val_da, test_da = self._split_da_along_time(test_da, days_ratio=(self.val_time_ratio, self.test_time_ratio), n_gap=7)
+
+
+
 
         # 7) assign normalized data back to DataArrays
-        train_da = xr.DataArray(
-            data=train_data_normed,
-            dims=train_da.dims,
-            coords=train_da.coords,
-            attrs=train_da.attrs
-        )
-        test_da = xr.DataArray(
-            data=test_data_normed,
-            dims=test_da.dims,
-            coords=test_da.coords,
-            attrs=test_da.attrs
-        )
+        if self.verbose:
+            print("Reconstructing normalized train/test DAs...")
+        train_da = train_da.astype(required_dtype)
+        val_da = val_da.astype(required_dtype)
+        test_da = test_da.astype(required_dtype)
 
-        # 8) final housekeeping: dtype
-        required_dtype = getattr(np, self.dtype_str)
-        if train_da.dtype != required_dtype:
-            train_da = train_da.astype(required_dtype)
-        if test_da.dtype != required_dtype:
-            test_da = test_da.astype(required_dtype)
+
 
         # attach season_idx attributes if desired (original code did this)
+        if self.verbose:
+            print("Attaching season_idx and depth attributes to train/test DAs...")
         train_da.attrs['season_idx'] = [month_to_season(m) for m in pd.DatetimeIndex(train_da["time"]).month.values]
+        val_da.attrs['season_idx'] = [month_to_season(m) for m in pd.DatetimeIndex(val_da["time"]).month.values]
         test_da.attrs['season_idx'] = [month_to_season(m) for m in pd.DatetimeIndex(test_da["time"]).month.values]
 
-        # store final processed DAs and create datasets
-        self.train_da = train_da
-        self.test_da = test_da
+        train_da.attrs['original_space_coords'] = train_lat_lon
+        val_da.attrs['original_space_coords'] = val_lat_lon
+        test_da.attrs['original_space_coords'] = test_lat_lon
 
-        self.train_shape = self.train_da.shape
-        self.test_shape = self.test_da.shape
+        train_da.attrs['norm_stats'] = self.norm_stats
+        val_da.attrs['norm_stats'] = self.norm_stats if self.test_norm == "on_train" else self.test_norm_stats
+        test_da.attrs['norm_stats'] = self.test_norm_stats if self.test_norm == "on_test" else self.norm_stats
+
+
+        if self.verbose:
+            print("Attaching SST data to train/test DAs...")
+        train_da, val_da, test_da = self._attach_sst(train_da, val_da, test_da)
+
+        # store final processed DAs and create datasets
+        if self.verbose:
+            print("Storing final processed train/test DAs...")
+
+
+        self.train_shape = train_da.shape
+        self.val_shape = val_da.shape
+        self.test_shape = test_da.shape
+
+        
 
         # Create torch datasets (keeps ordering time,z,lat,lon and returns .data per sample)
-        self.train_ds = AE_BaseDataset_3D(self.train_da)
-        self.test_ds = AE_BaseDataset_3D(self.test_da)
+        if self.verbose:
+            print("Creating torch datasets for train/val/test DAs...")
+        self.train_ds = AE_BaseDataset_3D(train_da)
+        self.val_ds = AE_BaseDataset_3D(val_da)
+        self.test_ds = AE_BaseDataset_3D(test_da)
 
-        # set drop_last behavior (unchanged)
-        self.is_data_normed = True
+        
+
+
+        del self.train_da
+        del self.test_da
+        del self.val_da
+        del self.train_sst
+        del self.test_sst
+
+
 
     def train_dataloader(self):
-        return torch.utils.data.DataLoader(self.train_ds, shuffle=False, drop_last=self.drop_last_batch, **self.dl_kw)
+        g = torch.Generator()
+        g.manual_seed(self.seed)
+        return torch.utils.data.DataLoader(
+            self.train_ds,
+            shuffle=self.shuffle,
+            worker_init_fn=_seed_worker,
+            generator=g,
+            **self.dl_kw
+        )
+    
+    def val_dataloader(self):
 
-    # no validation loader (user requested to remove validation dataset)
+        return torch.utils.data.DataLoader(
+            self.val_ds,
+            shuffle=False,
+            **self.dl_kw
+        )
+
     def test_dataloader(self):
-        return torch.utils.data.DataLoader(self.test_ds, shuffle=False, drop_last=self.drop_last_batch, **self.dl_kw)
+
+        return torch.utils.data.DataLoader(
+            self.test_ds,
+            shuffle=False,
+            **self.dl_kw
+        )
 
 
 class AE_BaseDataset_3D(torch.utils.data.Dataset):
@@ -364,3 +582,48 @@ class AE_BaseDataset_3D(torch.utils.data.Dataset):
     def __getitem__(self, index):
         # returns numpy array (time slice's data) — the training loop can convert to torch.tensor as needed
         return self.input[index].data
+
+
+
+if __name__ == "__main__":
+        
+        save_dm = True
+        batch_size = 4
+        rgb = {"use":False, "method":"CAE"} #PCA
+        chn = "3" if rgb["use"] else "157"
+        dm_path = f"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_{chn}_196_256_norm_on_test_good_split.pkl"
+
+        data_path ={"enatl": "/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc",
+                    "natl": "/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc"}
+
+
+        datamodule = AEDatamodule(
+            dl_kw={"batch_size": batch_size, "num_workers": 8},
+            norm_stats={"method": "min_max"}, #, "params": {"mean": None, "std": None}  #"method":"min_max"
+            test_norm="on_test", #on_test
+            manage_nan="supress_with_max_depth",
+            reshape=["factor_64"], #["factor_64"], #"RGB"
+            rgb=rgb,
+            dtype_str="float32",
+            shuffle=True,
+            )
+
+        datamodule.setup()
+
+        # save_data = {
+        #     'train_da': datamodule.train_da,
+        #     'test_da': datamodule.test_da,
+        #     'norm_stats': datamodule.norm_stats,
+        #     'config': {
+        #         'batch_size': batch_size,
+        #         'rgb': rgb,
+        #         'manage_nan': 'supress_with_max_depth',
+        #         'reshape': ['factor_64']
+        #     }
+        # }
+
+        if save_dm:
+            print("Saving datamodule to:", dm_path)
+            with open(dm_path, 'wb') as f:
+                pickle.dump(datamodule, f)
+

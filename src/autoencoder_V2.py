@@ -55,6 +55,8 @@ class AutoEncoder(pl.LightningModule):
 
 
         self.best = float('inf')
+        self.best_rmse = float('inf')
+        self.best_f1 = 0.0
         self.loss_dict = {}
         
         self.save_hyperparameters()
@@ -71,8 +73,10 @@ class AutoEncoder(pl.LightningModule):
         
         #self.model_dtype = self.trainer.datamodule.model_dtype
 
-        self.depth_pre_treatment = self.trainer.datamodule.depth_pre_treatment
+        self.depth_pre_treatment = vars(self.trainer.datamodule).get("depth_pre_treatment", {"method": None})
         self.norm_stats = self.trainer.datamodule.norm_stats  # includes "norm_location"
+        if not self.norm_stats.get("norm_location"):
+            self.norm_stats["norm_location"] = "datamodule"
         self.depth_arr = self.trainer.datamodule.depth_array
         self.z_tens = torch.tensor(self.depth_arr, device=batch.device,dtype=batch.dtype)
 
@@ -151,9 +155,21 @@ class AutoEncoder(pl.LightningModule):
 
 
     def on_train_start(self):
-        # New code to compute baseline losses and update normalized_loss_weight based on the initial batch.
-        # Begin new normalization procedure:
-        self.best = float('inf')
+
+        if self.loss_weight.get("method") == "value":
+            self.normalized_loss_weight = self.loss_weight.copy()
+            return
+        elif self.loss_weight.get("method") == "factor":
+            # For factor method, start with only prediction_weight=1, all others=0
+            # The full factor-based weights will be applied after 100 epochs
+            self.normalized_loss_weight = {key: 0 for key in self.loss_weight.keys()}
+            self.normalized_loss_weight["method"] = "factor"
+            self.normalized_loss_weight["prediction_weight"] = 1
+            self._factor_weights_applied = False
+            return
+
+    def _apply_factor_weights(self):
+        """Compute and apply factor-based weight normalization after warmup epochs."""
         self.model_AE.eval()
         with torch.no_grad():
             ssp_truth = self.example_input_array
@@ -192,18 +208,29 @@ class AutoEncoder(pl.LightningModule):
 
         # Update normalized_loss_weight: new weight = original weight * norm_factor
         for key, orig_weight in self.loss_weight.items():
+            if key == "method":
+                continue
             self.normalized_loss_weight[key] = orig_weight * norm_factors.get(key, 1.0)
 
         if self.verbose:
             print("Baseline losses:",
-                  {"pred": pred_loss.item(), "weighted": weighted_loss.item(), "treshold": treshold_loss.item(),
-                   "max_position": max_position_loss.item(), "max_value": max_value_loss.item(),
-                   "gradient": gradient_loss if isinstance(gradient_loss, float) else gradient_loss.item(),
-                   "min_max_position": min_max_pos_loss if isinstance(min_max_pos_loss, float) else min_max_pos_loss.item(),
-                   "min_max_value": min_max_value_loss if isinstance(min_max_value_loss, float) else min_max_value_loss.item(),
-                   "fft": fft_loss if isinstance(fft_loss, float) else fft_loss.item()})
+                {"pred": pred_loss.item(), "weighted": weighted_loss.item(), "treshold": treshold_loss.item(),
+                "max_position": max_position_loss.item(), "max_value": max_value_loss.item(),
+                "gradient": gradient_loss if isinstance(gradient_loss, float) else gradient_loss.item(),
+                "min_max_position": min_max_pos_loss if isinstance(min_max_pos_loss, float) else min_max_pos_loss.item(),
+                "min_max_value": min_max_value_loss if isinstance(min_max_value_loss, float) else min_max_value_loss.item(),
+                "fft": fft_loss if isinstance(fft_loss, float) else fft_loss.item()})
             print("Normalization factors:", norm_factors)
             print("Updated normalized_loss_weight:", self.normalized_loss_weight)
+        
+        print(f"Factor-based loss weights applied at epoch {self.current_epoch}")
+
+    def on_train_epoch_end(self):
+        # Apply factor-based weights after 100 epochs
+        if self.loss_weight.get("method") == "factor" and not getattr(self, '_factor_weights_applied', True):
+            if self.current_epoch >= 99:  # 0-indexed, so epoch 99 is the 100th epoch
+                self._apply_factor_weights()
+                self._factor_weights_applied = True
 
 
         
@@ -216,47 +243,70 @@ class AutoEncoder(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         self.train()
         batch.requires_grad = True
-        return self.step(batch,'train')
+        loss, _, _ = self.step(batch,'train')
+        return loss
     
     def on_validation_start(self):
         self.avg_val_loss = 0.0
+        self.avg_val_rmse = 0.0
+        self.avg_val_f1 = 0.0
         return super().on_validation_start()
 
     
     def validation_step(self, batch, batch_idx):
         self.eval()
-        val_loss = self.step(batch,'val')
+        val_loss, val_rmse, val_f1 = self.step(batch,'val')
         self.avg_val_loss += val_loss
+        self.avg_val_rmse += val_rmse
+        self.avg_val_f1 += val_f1
         return val_loss
 
 
     def on_validation_end(self):
-        self.avg_val_loss = self.avg_val_loss / len(self.trainer.datamodule.val_dataloader())
+        n_val_batches = len(self.trainer.datamodule.val_dataloader())
+        self.avg_val_loss = self.avg_val_loss / n_val_batches
+        self.avg_val_rmse = self.avg_val_rmse / n_val_batches
+        self.avg_val_f1 = self.avg_val_f1 / n_val_batches
+        
+        optimizer = self.opt_fn(self)["optimizer"]
+        lr_scheduler = self.opt_fn(self).get("lr_scheduler", None)
+        dir_path = self.trainer.checkpoint_callback.dirpath
+        
+        base_state = {
+            "epoch": self.current_epoch + 1,
+            "state_dict": self.model_AE.state_dict(),
+            "loss_dict": self.loss_dict,
+            "optimizer": optimizer.state_dict(),
+            "scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None,
+            "norm_stats": self.norm_stats,
+            "depth_pre_treatment": self.depth_pre_treatment,
+        }
+        
+        # Save best loss checkpoint
         if self.avg_val_loss < self.best:
             self.best = self.avg_val_loss
-            state = {
-                "epoch": self.current_epoch + 1,
-                "state_dict": self.model_AE.state_dict(),
-                "loss_dict": self.loss_dict,
-                "optimizer": self.opt_fn.state_dict(),
-                "norm_stats": self.norm_stats,
-                "depth_pre_treatment": self.depth_pre_treatment,
-            }
-
-            dir_path = self.trainer.checkpoint_callback.dirpath 
-
-            save_checkpoint(
-                state= state,
-                dir_path=dir_path,
-                filename="best_checkpoint_loss.pth.tar"
-            )
-
-            print('best checkpoint (loss) saved.')
-            print(f"New best validation loss: {self.avg_val_loss}")
+            state = {**base_state, "metric": "loss", "value": self.avg_val_loss}
+            save_checkpoint(state=state, dir_path=dir_path, filename="best_checkpoint_loss.pth.tar")
+            print(f'Best checkpoint (loss) saved. New best validation loss: {self.avg_val_loss}')
+        
+        # Save best RMSE checkpoint (lower is better)
+        if self.avg_val_rmse < self.best_rmse:
+            self.best_rmse = self.avg_val_rmse
+            state = {**base_state, "metric": "rmse", "value": self.avg_val_rmse}
+            save_checkpoint(state=state, dir_path=dir_path, filename="best_checkpoint_rmse.pth.tar")
+            print(f'Best checkpoint (RMSE) saved. New best validation RMSE: {self.avg_val_rmse}')
+        
+        # Save best F1 checkpoint (higher is better)
+        if self.avg_val_f1 > self.best_f1:
+            self.best_f1 = self.avg_val_f1
+            state = {**base_state, "metric": "f1", "value": self.avg_val_f1}
+            save_checkpoint(state=state, dir_path=dir_path, filename="best_checkpoint_f1.pth.tar")
+            print(f'Best checkpoint (F1) saved. New best validation F1: {self.avg_val_f1}')
 
     def test_step(self, batch, batch_idx):
         self.eval()
-        return self.step(batch,'test')
+        loss, _, _ = self.step(batch,'test')
+        return loss
     
 
 
@@ -358,8 +408,10 @@ class AutoEncoder(pl.LightningModule):
 
         self.log(f"{phase}_loss", full_loss, prog_bar=False, on_step=None, on_epoch=True)
         
-
-        return full_loss
+        # Return metrics for validation tracking
+        if phase == "val" or phase == "test":
+            return full_loss, ssp_rmse, f1
+        return full_loss, None, None
         
 
 

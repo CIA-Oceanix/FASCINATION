@@ -4,7 +4,7 @@ import os
 from torchinfo import summary
 torch.set_float32_matmul_precision('high')
 
-def base_training(trainer, dm, lit_mod, dim = "3D", test_dm=None, ckpt=None, pickle_path = None):
+def base_training(trainer, dm, lit_mod, dim = "3D", test_dm=None, ckpt=None, save_dm = False):
     if trainer.logger is not None:
         print()
         print("Logdir:", trainer.logger.log_dir)
@@ -38,16 +38,11 @@ def base_training(trainer, dm, lit_mod, dim = "3D", test_dm=None, ckpt=None, pic
     
 
 
-    # if pickle_path:
-    #     os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
-    #     with open(pickle_path,"wb") as f:
-    #         pickle.dump(
-    #             dict(
-    #                 train=dm.train_ds.input.time.values,
-    #                 val=dm.val_ds.input.time.values,
-    #                 test=dm.test_ds.input.time.values
-    #             ),
-    #             f
-    #         )
+    if save_dm:
+        dm_path = f"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_141_240_good_split.pkl"#f"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm__{chn}_196_256.pkl" #enatl_dm_4_157_196_256.pkl
+        os.makedirs(os.path.dirname(dm_path), exist_ok=True)
+        with open(dm_path,"wb") as f:
+            pickle.dump(dm,f
+            )
                 
     

@@ -118,51 +118,68 @@ if __name__ == "__main__":
     use_4D_dif_pca = False #or xp == "autoencoder_V2"
     pooling_dim = "spatial" if xp == "autoencoder_V2" else "all"
     min_components = 1
+    max_components = 20 
     n_layers = 4
     gpu = 0
-    cfg_path = f"config/xp/{xp}.yaml"
-    cfg = OmegaConf.load(cfg_path)
-    cfg.dtype = "float64"
+    # cfg_path = f"config/xp/{xp}.yaml"
+    # cfg = OmegaConf.load(cfg_path)
+    #cfg.dtype = "float64"
     if torch.cuda.is_available() and gpu is not None:
         dev = f"cuda:{gpu}"
     else:
         dev = "cpu"
     device = torch.device(dev)
-    print("Inititing datamodule; Generating train and test datasets")
-    dm = hydra.utils.call(cfg.datamodule)
-    train_ssp_arr, _, dm = loading_datamodule(dm)
-    if dm.norm_stats["norm_location"] == "datamodule":
-        train_ssp_arr = unorm_ssp_arr_3D(train_ssp_arr, dm) #, unorm_ssp_arr_3D(test_ssp_arr, dm)
+    #print("Inititing datamodule; Generating train and test datasets")
+    # dm = hydra.utils.call(cfg.datamodule)
+    # train_ssp_arr, _, dm = loading_datamodule(dm)
+    # if dm.norm_stats["norm_location"] == "datamodule":
+    #     train_ssp_arr = unorm_ssp_arr_3D(train_ssp_arr, dm) #, unorm_ssp_arr_3D(test_ssp_arr, dm)
     
 
 
-    #x_min,x_max = dm_mlic.norm_stats['params'].values()
-    season_idx = dm.test_da.season_idx
+    # #x_min,x_max = dm_mlic.norm_stats['params'].values()
+    # season_idx = dm.test_da.season_idx
 
-    natl_test_data = xr.open_dataarray("/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc").isel(time=season_idx)
-    max_depth = 2000
-    # Drop all lat coordinates presenting a nan for depths (z) inferior to 2000
-    # Select only data for depths < 2000
-    sub_da = natl_test_data.sel(z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True))
-    # For each lat, check if there is any nan across time, z, and lon
-    lat_nan = sub_da.isnull().any(dim=["time", "z", "lon"])
-    # Get valid latitudes (i.e. where there is no nan)
-    valid_lats = lat_nan.where(lat_nan == False, drop=True).coords["lat"].values
-    # Select only the valid latitudes and drop all z coordinates superior to 2000.
-    natl_test_data = natl_test_data.sel(lat=valid_lats, z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True)).astype(getattr(np, dm.dtype_str))
+    # natl_test_data = xr.open_dataarray("/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc").isel(time=season_idx)
+    # max_depth = 2000
+    # # Drop all lat coordinates presenting a nan for depths (z) inferior to 2000
+    # # Select only data for depths < 2000
+    # sub_da = natl_test_data.sel(z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True))
+    # # For each lat, check if there is any nan across time, z, and lon
+    # lat_nan = sub_da.isnull().any(dim=["time", "z", "lon"])
+    # # Get valid latitudes (i.e. where there is no nan)
+    # valid_lats = lat_nan.where(lat_nan == False, drop=True).coords["lat"].values
+    # # Select only the valid latitudes and drop all z coordinates superior to 2000.
+    # natl_test_data = natl_test_data.sel(lat=valid_lats, z=natl_test_data.z.where(natl_test_data.z < max_depth, drop=True)).astype(getattr(np, dm.dtype_str))
 
-    test_ssp_arr = natl_test_data.data
+    # test_ssp_arr = natl_test_data.data
     
-    test_ssp_tens = torch.tensor(test_ssp_arr, dtype=getattr(torch, cfg.dtype), device=device)
+    # test_ssp_tens = torch.tensor(test_ssp_arr, dtype=getattr(torch, cfg.dtype), device=device)
+    dm_cae_path = '/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_141_240_good_split.pkl'
+    print("loading datamodule and generating train and test datasets")
+    with open(dm_cae_path, 'rb') as f:
+        dm_cae = pickle.load(f)
+
+
+    depth_array = dm_cae.depth_array
+    train_norm_stats = dm_cae.train_ds.input.attrs['norm_stats']
+    test_norm_stats = dm_cae.test_ds.input.attrs['norm_stats']
+    train_arr = dm_cae.train_ds.input.data.copy()
+    test_arr = dm_cae.test_ds.input.data.copy()
+    train_ssp_arr = unorm_ssp_arr_3D(train_arr, train_norm_stats)
+    test_ssp_arr = unorm_ssp_arr_3D(test_arr, test_norm_stats)
+    train_ssp_arr = train_ssp_arr.astype('float64') 
+    test_ssp_arr = test_ssp_arr.astype('float64')
+    test_ssp_tens = torch.tensor(test_ssp_arr.copy()).to(device=device, dtype=getattr(torch, dm_cae.dtype_str))
     
-    max_components = train_ssp_arr.shape[1] + 1
+    
+    max_components = min(train_ssp_arr.shape[1] + 1, max_components)
     if min_components == -1:
         min_components = max_components - 1
-    depth_array = dm.depth_array
     ecs_truth_idx = np.argmax(test_ssp_arr, axis=1)
     ecs_truth = depth_array[ecs_truth_idx]
     model_metrics = {}
-    for n_components in tqdm(range(min_components, max_components), unit="components", desc="Computing PCA components", disable=not(verbose)):
+    for n_components in tqdm([1,2,3,4,5,6,7,8,9,10,15,20,50,100,157], unit="components", desc="Computing PCA components", disable=not(verbose)):
         pca = PCA(n_components=n_components, svd_solver='auto')
         if xp == "autoencoder_V2":
             train_data = train_ssp_arr.transpose(0, 2, 3, 1).reshape(-1, train_ssp_arr.shape[1])
@@ -193,7 +210,7 @@ if __name__ == "__main__":
                 pca_unreduced_test_ssp_tens = dif_pca.inverse_transform(pooled_upsampled_test_ssp_tens)
                 pca_unreduced_test_ssp_arr = pca_unreduced_test_ssp_tens.detach().cpu().numpy()
             else:
-                unreduced = pca.inverse_transform(pooled_upsampled_test_ssp_tens.detach().cpu().numpy())
+                unreduced = pca.inverse_transform(pooled_upsampled_test_ssp_tens.detach().cpu().numpy().transpose(0, 2, 3, 1).reshape(-1, n_components))
                 if xp == "autoencoder_V2":
                     pca_unreduced_test_ssp_arr = unreduced.reshape(test_ssp_arr.shape[0], test_ssp_arr.shape[2], test_ssp_arr.shape[3], test_ssp_arr.shape[1]).transpose(0, 3, 1, 2)
                 else:
@@ -231,7 +248,7 @@ if __name__ == "__main__":
 
 
 
-            bits_per_value = 64 if cfg.dtype == "float64" else 32
+            bits_per_value = 64 if test_ssp_arr.dtype == "float64" else 32
             original_shape = test_ssp_arr.shape
             original_bits = np.prod(original_shape) * bits_per_value
 
@@ -272,5 +289,5 @@ if __name__ == "__main__":
         pca_name = "dif_pca"
     else:
         pca_name = "sklearn_pca"
-    with open(f'pickle/model_metrics_pca.pkl', 'wb') as f:
+    with open(f'pickle/model_metrics_pca_float64.pkl', 'wb') as f:
         pickle.dump(model_metrics, f)

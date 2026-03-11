@@ -32,7 +32,7 @@ trainer:
     #version: pred_weight_${model.pred_weight}_classif_weight_${model.classif_weight}_${now:%Y-%m-%d_%H-%M}
 
   min_epochs: 0
-  max_epochs: 1
+  max_epochs: 2000
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
     - _target_: pytorch_lightning.callbacks.ModelCheckpoint

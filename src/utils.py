@@ -67,7 +67,15 @@ def load_model(model_ckpt_path: str,
     # torch.serialization.add_safe_globals([DictConfig])
 
     checkpoint = torch.load(model_ckpt_path, weights_only=False, map_location=batch.device)
-    lit_mod.load_state_dict(checkpoint["state_dict"],strict=False)
+    state_dict = {}
+    for k, v in checkpoint['state_dict'].items():
+        # Only add prefix if not already present
+        if not k.startswith('model_AE.') and not k.startswith('dif_pca_4D.'):
+            state_dict['model_AE.' + k] = v
+        else:
+            state_dict[k] = v
+
+    lit_mod.load_state_dict(state_dict,strict=False)
     #lit_mod.load_state_dict(torch.load(model_ckpt_path, map_location=device)["state_dict"])
 
     lit_mod.verbose = verbose
@@ -83,7 +91,7 @@ def model_setup(lit_model,
                 dm,
                 batch):
     
-    lit_model.depth_pre_treatment = dm.depth_pre_treatment
+    lit_model.depth_pre_treatment = vars(dm).get("depth_pre_treatment",{})     
     lit_model.norm_stats = dm.norm_stats
     lit_model.depth_arr = dm.depth_array
 
@@ -210,33 +218,37 @@ def get_cfg_from_ckpt_path(ckpt_path, pprint = False):
 
 
 
-def unorm_ssp_arr_3D(ssp_arr:np.array, dm, verbose = False):
+def unorm_ssp_arr_3D(ssp_arr:np.array, norm_stats, verbose = False):
 
     if verbose:
-        print(dm.norm_stats.method)
+        print(norm_stats['method'])
 
-    if dm.depth_pre_treatment.get('method') == "pca":
-        if dm.depth_pre_treatment.get("norm_on") == "components":
-            pca = dm.depth_pre_treatment.get("fitted_pca")
-            ssp_shape = ssp_arr.shape
-            ssp_arr = pca.transform(ssp_arr.transpose(0,2,3,1).reshape(-1,ssp_shape[1])).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], pca.n_components).transpose(0,3,1,2)
+    # if dm.depth_pre_treatment.get('method') == "pca":
+    #     if dm.depth_pre_treatment.get("norm_on") == "components":
+    #         pca = dm.depth_pre_treatment.get("fitted_pca")
+    #         ssp_shape = ssp_arr.shape
+    #         ssp_arr = pca.transform(ssp_arr.transpose(0,2,3,1).reshape(-1,ssp_shape[1])).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], pca.n_components).transpose(0,3,1,2)
 
 
-    if dm.norm_stats['method'] == "mean_std_along_depth":
-        mean,std = dm.norm_stats['params'].values()
+    if norm_stats['method'] == "mean_std_along_depth":
+        
+        mean,std = norm_stats['params']["mean_along_depth"].astype(ssp_arr.dtype), norm_stats['params']["std_along_depth"].astype(ssp_arr.dtype)
+        if len(ssp_arr.shape) == 1:
+            std = std.squeeze()
+            mean = mean.squeeze()
         ssp_unorm_arr = (ssp_arr*std) + mean
         
-    elif dm.norm_stats['method'] == "mean_std":
-        mean,std = dm.norm_stats['params'].values()
+    elif norm_stats['method'] == "mean_std":
+        mean,std = norm_stats['params']["mean"].astype(ssp_arr.dtype), norm_stats['params']["std"].astype(ssp_arr.dtype)
         ssp_unorm_arr = ssp_arr*std + mean
     
-    elif dm.norm_stats['method'] == "min_max":
-        x_min,x_max = dm.norm_stats['params']['x_min'],dm.norm_stats['params']['x_max'] #dm.norm_stats['params'].values()
+    elif norm_stats['method'] == "min_max":
+        x_min,x_max = norm_stats['params']['x_min'].astype(ssp_arr.dtype),norm_stats['params']['x_max'].astype(ssp_arr.dtype) #dm.norm_stats['params'].values()
         ssp_unorm_arr =ssp_arr*(x_max-x_min) + x_min
     
-    if dm.depth_pre_treatment.get('method') == "pca":
-        if dm.depth_pre_treatment.get("norm_on") == "components":
-            ssp_unorm_arr = pca.inverse_transform(ssp_unorm_arr.transpose(0,2,3,1).reshape(-1,pca.n_components)).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], len(dm.depth_array)).transpose(0,3,1,2)
+    # if dm.depth_pre_treatment.get('method') == "pca":
+    #     if dm.depth_pre_treatment.get("norm_on") == "components":
+    #         ssp_unorm_arr = pca.inverse_transform(ssp_unorm_arr.transpose(0,2,3,1).reshape(-1,pca.n_components)).reshape(ssp_shape[0], ssp_shape[2], ssp_shape[3], len(dm.depth_array)).transpose(0,3,1,2)
 
             
     return ssp_unorm_arr

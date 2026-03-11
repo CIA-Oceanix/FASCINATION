@@ -119,9 +119,9 @@ class AE_CNN(nn.Module):
 
 
         self.pooling = pooling
-        self.pooling_layer = pooling_dict[pooling]
-        self.upsample_layer = upsample_dict[pooling]
-        self.act_fn = act_fn_dict[act_fn_str]
+        self.pooling_layer = pooling_dict.get(pooling, nn.Identity())
+        self.upsample_layer = upsample_dict.get(pooling, nn.Identity())
+        self.act_fn = act_fn_dict.get(act_fn_str, nn.Identity())
 
         self.encoder = AE_CNN_Encoder(self)
         self.decoder = AE_CNN_Decoder(self)
@@ -411,6 +411,13 @@ class AE_CNN_Decoder(nn.Module):
             
                 elif parent.final_upsample_str == "upsample":
                     layers[-2] = nn.Upsample(size = output_size, mode = parent.upsample_mode)
+                
+                elif not parent.final_upsample_str:
+                    layers[-2] = nn.Identity()  # Explicitly remove upsample
+                
+                # Remove final activation function if use_final_act_fn is False
+                if not parent.use_final_act_fn:
+                    layers[-1] = nn.Identity()
 
 
             if parent.n_conv_per_layer > 1:
