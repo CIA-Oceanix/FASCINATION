@@ -49,11 +49,12 @@ class AEDatamodule(pl.LightningDataModule):
         dl_kw,
         norm_stats,
         manage_nan: str = "supress_with_max_depth",
-        reshape=None,
+        reshape={"factor_64": True, "spatial_crop": 5},  # set to {} or None to disable
         rgb={"use": False, "method": None},
         dtype_str='float32',
         space_ratio_init: float = 0.2,
         shuffle: bool = True,
+        normalize_per_split: bool = False,
         seed: int = 42,
     ):
         """
@@ -75,6 +76,9 @@ class AEDatamodule(pl.LightningDataModule):
             NOTE: CAE method removed.
         dtype_str : str
             numpy dtype string, e.g. 'float32'
+        normalize_per_split : bool
+            If True, compute normalization parameters separately for each split (train, val, test).
+            If False, compute from train split and apply to all splits. Default: False.
         """
         super().__init__()
 
@@ -99,11 +103,12 @@ class AEDatamodule(pl.LightningDataModule):
         self.norm_stats = norm_stats
         self.rgb = rgb
         self.manage_nan = manage_nan
+        self.normalize_per_split = normalize_per_split
         self.n_profiles = None
         self.train_time_ratio = 0.7
         self.val_time_ratio = 0.1
         self.test_time_ratio = 0.3
-        self.reshape = [] if reshape is None else reshape
+        self.reshape = {} if reshape is None else reshape
         self.dtype_str = dtype_str
         self.space_ratio = space_ratio_init
         self.time_ratio = 0.1
@@ -274,8 +279,7 @@ class AEDatamodule(pl.LightningDataModule):
     def _factor_64_pad_interp(self, da: xr.DataArray):
         """If 'factor_64' in reshape: interpolate lat/lon so sizes are multiples of 64.
            Interpolation is done per-DA independently (so resulting lat/lon may differ between train/test)."""
-        if "factor_64" not in self.reshape:
-            return da
+
 
         lat_size = len(da.lat)
         lon_size = len(da.lon)
@@ -433,6 +437,8 @@ class AEDatamodule(pl.LightningDataModule):
         # train_da.attrs["original_data"] = train_da.copy()
         # test_da.attrs["original_data"] = test_da.copy()
 
+
+
         # 1) NAN management per DA
         if self.verbose:
             print("Managing NaNs for train/test DAs...")
@@ -448,13 +454,24 @@ class AEDatamodule(pl.LightningDataModule):
 
         # After nan management, ensure depth coords exist and are comparable (we only require same depth axis semantics)
         # We do NOT force lat/lon alignorm_statsent between train/test.
+        
+        
 
 
         # 3) factor_64 interpolation separately per DA
         if self.verbose:
             print("Applying factor_64 padding/interpolation for train/test DAs...")
-        train_da = self._factor_64_pad_interp(train_da)
+
+
+
+
+        if self.reshape.get("factor_64", False):
+            train_da = self._factor_64_pad_interp(train_da)
         #test_da = self._factor_64_pad_interp(test_da)
+
+        spatial_crop_idx = self.reshape.get("spatial_crop", 0)
+        if spatial_crop_idx > 0:
+            train_da = train_da.isel(lat=slice(spatial_crop_idx, -spatial_crop_idx), lon=slice(spatial_crop_idx, -spatial_crop_idx))
 
         # 4) rgb depth_layers option (applied per DA)
 
@@ -468,43 +485,81 @@ class AEDatamodule(pl.LightningDataModule):
                 # CAE-based rgb method removed — raise error if user requests it
                 raise RuntimeError("rgb method 'CAE' is removed. Only 'depth_layers' is supported if rgb.use is True.")
 
-        # 5) compute normalization statistics from train only
-        # prepare train numpy array for stats: ensure shape (time, z, lat, lon)
-        train_arr = train_da.data  # numpy ndarray
-        # if there are NaNs remaining, keep nan-aware stats
-        if self.verbose:
-            print("Computing normalization stats from train DA...")
-        if self.norm_stats.get("params") is None or any(v is None for v in (self.norm_stats.get("params") or {}).values()):
-            self._get_train_norm_stats(train_arr, self.norm_stats, verbose=False)
-
-        # 6) apply normalization to both DAs (use same params)
-        if self.verbose:
-            print("Applying normalization to train/test DAs...")
-        train_arr = self._apply_normalization_to_data(train_da.data, self.norm_stats)
-        
-        train_da[:] = train_arr
-
-        # 2) spatio-temporal subsample based on n_profiles (per DA)
+        # 5) spatio-temporal subsample based on n_profiles (per DA)
         if self.verbose:
             print("Selecting days for train/test DAs...")
             train_da, val_da, test_da = self._split_da_along_time(train_da, days_ratio=(self.train_time_ratio,self.val_time_ratio,self.test_time_ratio), n_gap=7)
+
+        # 6) compute and apply normalization after split
+        if self.verbose:
+            print(f"Computing and applying normalization (normalize_per_split={self.normalize_per_split})...")
+        
+        if self.normalize_per_split:
+            # Compute normalization stats separately for each split
+            train_norm_stats = self.norm_stats.copy()
+            val_norm_stats = self.norm_stats.copy()
+            test_norm_stats = self.norm_stats.copy()
+            
+            # Compute stats from each split
+            train_arr = train_da.data
+            if self.verbose:
+                print("  Computing normalization stats from train split...")
+            if train_norm_stats.get("params") is None or any(v is None for v in (train_norm_stats.get("params") or {}).values()):
+                self._get_train_norm_stats(train_arr, train_norm_stats, verbose=False)
+            train_norm_stats["norm_from"] = "train"
+            
+            val_arr = val_da.data
+            if self.verbose:
+                print("  Computing normalization stats from val split...")
+            val_norm_stats["params"] = {}
+            self._get_train_norm_stats(val_arr, val_norm_stats, verbose=False)
+            val_norm_stats["norm_from"] = "val"
+            
+            test_arr = test_da.data
+            if self.verbose:
+                print("  Computing normalization stats from test split...")
+            test_norm_stats["params"] = {}
+            self._get_train_norm_stats(test_arr, test_norm_stats, verbose=False)
+            test_norm_stats["norm_from"] = "test"
+            
+            # Apply normalization to each split with its own stats
+            train_da[:] = self._apply_normalization_to_data(train_da.data, train_norm_stats)
+            train_da.attrs['norm_stats'] = train_norm_stats
+            
+            val_da[:] = self._apply_normalization_to_data(val_da.data, val_norm_stats)
+            val_da.attrs['norm_stats'] = val_norm_stats
+            
+            test_da[:] = self._apply_normalization_to_data(test_da.data, test_norm_stats)
+            test_da.attrs['norm_stats'] = test_norm_stats
+        else:
+            # Compute normalization stats from train split and apply to all splits
+            train_arr = train_da.data
+            if self.verbose:
+                print("  Computing normalization stats from train split (applied to all)...")
+            if self.norm_stats.get("params") is None or any(v is None for v in (self.norm_stats.get("params") or {}).values()):
+                self._get_train_norm_stats(train_arr, self.norm_stats, verbose=False)
+            self.norm_stats["norm_from"] = "train"
+            
+            # Apply the same normalization to all splits
+            if self.verbose:
+                print("  Applying train normalization stats to all splits...")
+            train_da[:] = self._apply_normalization_to_data(train_da.data, self.norm_stats)
+            val_da[:] = self._apply_normalization_to_data(val_da.data, self.norm_stats)
+            test_da[:] = self._apply_normalization_to_data(test_da.data, self.norm_stats)
 
 
 
 
         # 7) assign normalized data back to DataArrays
         if self.verbose:
-            print("Reconstructing normalized train/test DAs...")
+            print("Reconstructing normalized train/val/test DAs...")
         train_da = train_da.astype(required_dtype)
-
         val_da = val_da.astype(required_dtype)
-
         test_da = test_da.astype(required_dtype)
-
 
         # attach season_idx attributes if desired (original code did this)
         if self.verbose:
-            print("Attaching season_idx and depth attributes to train/test DAs...")
+            print("Attaching season_idx and depth attributes to train/val/test DAs...")
         train_da.attrs['season_idx'] = [month_to_season(m) for m in pd.DatetimeIndex(train_da["time"]).month.values]
         val_da.attrs['season_idx'] = [month_to_season(m) for m in pd.DatetimeIndex(val_da["time"]).month.values]
         test_da.attrs['season_idx'] = [month_to_season(m) for m in pd.DatetimeIndex(test_da["time"]).month.values]
@@ -513,9 +568,11 @@ class AEDatamodule(pl.LightningDataModule):
         val_da.attrs['original_space_coords'] = val_lat_lon
         test_da.attrs['original_space_coords'] = test_lat_lon
 
-        train_da.attrs['norm_stats'] = self.norm_stats
-        val_da.attrs['norm_stats'] = self.norm_stats
-        test_da.attrs['norm_stats'] = self.norm_stats
+        # norm_stats are already attached in step 6 if normalize_per_split, otherwise attach here
+        if not self.normalize_per_split:
+            train_da.attrs['norm_stats'] = self.norm_stats
+            val_da.attrs['norm_stats'] = self.norm_stats
+            test_da.attrs['norm_stats'] = self.norm_stats
 
 
         if self.verbose and not self.rgb.get("use", False) and not "sst" in self.data_name:
@@ -597,8 +654,8 @@ class AE_BaseDataset_3D(torch.utils.data.Dataset):
 
 if __name__ == "__main__":
         
-        save_dm = True
-        data_name = "natl_sst"  #"natl"  #
+        save_dm = False
+        data_name = "enatl"  #"natl"  #
         batch_size = 4
         rgb = {"use":False, "method":"CAE"} #PCA
         chn = "3" if rgb["use"] else "157"
@@ -610,10 +667,11 @@ if __name__ == "__main__":
             dl_kw={"batch_size": batch_size, "num_workers": 8},
             norm_stats={"method": "min_max"}, #, "params": {"mean": None, "std": None}  #"method":"min_max"on_test
             manage_nan="supress_with_max_depth",
-            reshape=["factor_64"], #["factor_64"], #"RGB"
+            reshape={"factor_64": True, "spatial_crop": 0}, #["factor_64"], #"RGB"
             rgb=rgb,
             dtype_str="float32",
             shuffle=True,
+            normalize_per_split=True
             )
 
         datamodule.setup()

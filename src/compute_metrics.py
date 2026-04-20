@@ -95,6 +95,44 @@ def find_first_level_dirs(base_dir: str) -> Dict[str, str]:
     return result
 
 
+def find_non_empty_checkpoint_dirs(base_dir: str, verbose: bool = False) -> Dict[str, str]:
+    """Find all non-empty checkpoint directories recursively.
+    
+    Searches for directories containing .pth.tar checkpoint files.
+    
+    Args:
+        base_dir (str): Base directory to search in
+        verbose (bool): Enable verbose output
+        
+    Returns:
+        Dict[str, str]: Dictionary mapping checkpoint folder names to their full paths
+    """
+    result = {}
+    
+    if not base_dir or not os.path.exists(base_dir):
+        if verbose:
+            print(f"Base directory does not exist: {base_dir}")
+        return result
+    
+    try:
+        # Recursively search for directories containing .pth.tar files
+        for root, dirs, files in os.walk(base_dir):
+            if "mute" in root:
+                continue
+            checkpoint_files = [f for f in files if f.endswith('.pth.tar')]
+            if checkpoint_files:
+                # Make a unique key for each checkpoint directory
+                relative_path = os.path.relpath(root, base_dir)
+                key = "_".join(root.split('/')[-4:-1])
+                result[key] = root
+                if verbose:
+                    print(f"Found checkpoint dir: {key} -> {root} ({len(checkpoint_files)} files)")
+    except Exception as e:
+        print(f"Error scanning checkpoint directories: {e}")
+    
+    return result
+
+
 def cubic_interpolate_along_axis(arr: np.ndarray, target_size: int, axis: int) -> np.ndarray:
     x_old = np.linspace(0, 1, arr.shape[axis])
     x_new = np.linspace(0, 1, target_size)
@@ -150,7 +188,7 @@ def compute_psnr(a: np.ndarray, b: np.ndarray, max_val: float = 255.0) -> float:
 
 
 def compute_msssim(a: torch.Tensor, b: torch.Tensor) -> float:
-    return ms_ssim(a, b, data_range=1.).item()
+    return ms_ssim(a, b, data_range=b.max()-b.min()).item()
 
 
 def compute_total_bits(out_net: Dict[str, torch.Tensor]) -> float:
@@ -177,10 +215,10 @@ def compute_metrics_for_arrays(test_ssp_truth: np.ndarray, ae_ssp_test: np.ndarr
     psnr = compute_psnr(test_ssp_truth, ae_ssp_test)
 
     if verbose:        print("Computing MS-SSIM...")
-    msssim = compute_msssim(torch.tensor(cubic_interpolate_along_axis(test_ssp_truth, 161, axis=2), dtype=torch.float64),
-                            torch.tensor(cubic_interpolate_along_axis(ae_ssp_test, 161, axis=2), dtype=torch.float64))
+    # msssim = compute_msssim(torch.tensor(cubic_interpolate_along_axis(test_ssp_truth, 161, axis=2), dtype=torch.float64),
+    #                         torch.tensor(cubic_interpolate_along_axis(ae_ssp_test, 161, axis=2), dtype=torch.float64))
     
-    #msssim = np.nan
+    msssim = np.nan
     if verbose:        print("Computing ECS, RMSE, MAE")
     max_ssp_ae_idx = np.nanargmax(ae_ssp_test, axis=1)
     ecs_pred_ae = depth_array[max_ssp_ae_idx]
@@ -260,7 +298,7 @@ def get_best_worst_random(test_ssp_truth_local, ae_ssp_test_local, depth_array_l
     def extract(idx):
         t0, lat0, lon0 = idx
         return {
-            metric_name: score[t0, lat0, lon0],
+            metric_name: np.abs(score[t0, lat0, lon0]),
             't_lat': ((t0, lat0), test_ssp_truth_local[t0, :, lat0, :], ae_ssp_test_local[t0, :, lat0, :].copy()),  # .copy() to avoid keeping ref to full array
             't_lat_lon': ((t0, lat0, lon0), test_ssp_truth_local[t0, :, lat0, lon0], ae_ssp_test_local[t0, :, lat0, lon0].copy())
         }
@@ -277,6 +315,8 @@ def compute_and_save(
     device: str = None,
     verbose: bool = False,
     unique_name: bool = True,
+    crop_slice: bool = 0,
+    fuse_val_test: bool = False
 ):
     device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -288,6 +328,10 @@ def compute_and_save(
     with open(dm_cae_pkl, 'rb') as f:
         dm_cae = pickle.load(f)
 
+    dm_path = "/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_norm_per_split.pkl" #"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_good_split.pkl" #
+    with open(dm_path, 'rb') as f:
+        dm_enatl = pickle.load(f)
+
     data_path ={"enatl": "/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc",
                 "natl": "/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc"}
     
@@ -297,28 +341,72 @@ def compute_and_save(
 
     #test_ssp_da = dm_cae.test_da #xr.open_dataarray(data_path['natl'])
 
+    
+
     test_coords = dm_mlic.test_ds.input.attrs["original_space_coords"]
 
+    if fuse_val_test:
+        # val_coords = dm_mlic.val_ds.input.attrs["original_space_coords"]
+
+        # test_coords = {
+        #     'lat': np.concatenate([test_coords['lat'], val_coords['lat']]),
+        #     'lon': np.concatenate([test_coords['lon'], val_coords['lon']])
+        # }
+
+        augmented_da = xr.concat([unorm_ssp_arr_3D(dm_mlic.test_ds.input, dm_mlic.test_ds.input.attrs['norm_stats']),
+                                  unorm_ssp_arr_3D(dm_mlic.val_ds.input, dm_mlic.val_ds.input.attrs['norm_stats'])], dim='time')
+
+                                  
+
+    else:
 
     #metric_datatest = unorm_ssp_arr_3D(dm_mlic.test_ds.input.data, dm_mlic)
-    augmented_da = dm_mlic.test_ds.input.copy()
-    mlic_test_arr = dm_mlic.test_ds.input.data.copy()
+        
+        augmented_da = dm_mlic.test_ds.input.copy()
+        augmented_da[:] = unorm_ssp_arr_3D(augmented_da.data, dm_mlic.test_ds.input.attrs['norm_stats'])
+
+
+
+    mlic_test_arr = augmented_da.data.copy()
     
     test_norm = augmented_da.attrs['norm_stats']
     season_idx = dm_mlic.test_ds.input.season_idx
 
-    metric_datatest = dm_mlic.test_ds.input.interp(
-                lat=test_coords['lat'],
-                lon=test_coords['lon'],
-                method="nearest"
-                ).data
-    metric_datatest = unorm_ssp_arr_3D(metric_datatest, test_norm)
+
+
+    train_months = np.unique(dm_enatl.train_ds.input.time.dt.month.values)
+    test_months = np.unique(dm_enatl.test_ds.input.time.dt.month.values)
+
+    if fuse_val_test:
+        metric_datatest = xr.concat([
+            unorm_ssp_arr_3D(dm_mlic.test_ds.input, dm_mlic.test_ds.input.attrs['norm_stats']),
+            unorm_ssp_arr_3D(dm_mlic.val_ds.input, dm_mlic.val_ds.input.attrs['norm_stats'])
+        ], dim='time')
+
+        metric_datatest = metric_datatest.interp(
+            lat=test_coords['lat'],
+            lon=test_coords['lon'],
+            method="nearest"
+        ).data
+
+
+    else:
+        metric_datatest = dm_mlic.test_ds.input.interp(
+                    lat=test_coords['lat'],
+                    lon=test_coords['lon'],
+                    method="nearest"
+                    )
+        #metric_datatest = metric_datatest.where(metric_datatest.time.dt.month.isin(test_months), drop=True)
+        metric_datatest = unorm_ssp_arr_3D(metric_datatest.data, test_norm)
 
     cae_test_ds = dm_cae.test_ds.input
     # Store unnormalized version for re-use in each checkpoint (will normalize fresh each time)
     cae_test_ssp_arr_unnorm = cae_test_ds.data.copy()
     cae_test_ssp_arr_unnorm = unorm_ssp_arr_3D(cae_test_ssp_arr_unnorm, cae_test_ds.attrs['norm_stats'])
     
+    train_time = dm_enatl.train_ds.input.time.values
+    test_time = dm_enatl.test_ds.input.time.values
+
 
     t_idx, lat_idx, lon_idx = 15, 101, 81
 
@@ -368,7 +456,14 @@ def compute_and_save(
     # Normalize SST arrays
     #sst_train_norm = (sst_train - sst_mean) / sst_std
     #sst_test_norm = (sst_test - sst_mean) / sst_std
-    sst_test_norm  = dm_mlic.test_ds.input.attrs['sst'].data
+    if fuse_val_test:
+        sst_test_norm = np.concatenate([
+            dm_mlic.test_ds.input.attrs['sst'].data,
+            dm_mlic.val_ds.input.attrs['sst'].data
+        ], axis=0)
+    
+    else:
+        sst_test_norm  = dm_mlic.test_ds.input.attrs['sst'].data
 
     # containers
     bit_rates = {}
@@ -380,7 +475,7 @@ def compute_and_save(
     data_dict: Dict[str, Dict[Any, Any]] = {}
 
     # --- MLIC checkpoints ---
-    mlic_ckpt_dict = find_first_level_dirs(mlic_base_dir)
+    mlic_ckpt_dict = find_non_empty_checkpoint_dirs(mlic_base_dir, verbose=verbose) #find_first_level_dirs(mlic_base_dir)
     if verbose:
         print(f'Found {len(mlic_ckpt_dict)} first-level entries under {mlic_base_dir}')
 
@@ -390,9 +485,16 @@ def compute_and_save(
 
         ckpt_files = list(Path(model_path).rglob('checkpoint_best_loss.pth.tar'))
         ckpt_files += list(Path(model_path).rglob('best_checkpoint_loss.pth.tar'))
-        ckpt_files += list(Path(model_path).rglob('best_checkpoint_ecs.pth.tar'))
         ckpt_files += list(Path(model_path).rglob('best_checkpoint_rmse.pth.tar'))
+        ckpt_files += list(Path(model_path).rglob('best_checkpoint_ecs.pth.tar'))
         ckpt_files += list(Path(model_path).rglob('best_checkpoint_f1.pth.tar'))
+        ckpt_files += list(Path(model_path).rglob('best_checkpoint_bpp_loss.pth.tar'))
+
+        # ckpt_files += list(Path(model_path).rglob('best_checkpoint_bpp_loss.pth.tar'))
+        # ckpt_files += list(Path(model_path).rglob('best_checkpoint_rmse.pth.tar'))
+
+
+        #ckpt_files = list(Path(model_path).rglob('best_checkpoint_rmse.pth.tar'))
 
 
         if not ckpt_files:
@@ -448,8 +550,10 @@ def compute_and_save(
             })
             
 
-            mlic_test_arr = dm_mlic.test_ds.input.data.copy()
-            mlic_test_arr = unorm_ssp_arr_3D(mlic_test_arr, test_norm)
+            mlic_test_arr = augmented_da.data.copy()  # augmented_da.where(augmented_da.time.dt.month.isin(test_months), drop=True).data.copy()
+            #mlic_test_arr = unorm_ssp_arr_3D(mlic_test_arr, test_norm)
+
+
 
 
             try:
@@ -459,24 +563,20 @@ def compute_and_save(
                     del ck['state_dict']["season_embed.weight"]
                 net.load_state_dict(ck['state_dict'])
 
-                try:
-                    test_norm = ck.get('test_norm_stats', None)
-                    test_norm_method = test_norm['method']
-                except:
-                    test_norm = augmented_da.attrs['norm_stats'].copy()
-                    test_norm_method = "min_max"
-                    test_norm['method'] = test_norm_method
 
-                
-                if test_norm_method == "min_max":
+                test_norm = ck.get('train_norm_stats', dm_mlic.test_ds.input.attrs['norm_stats'])
+                #test_norm_method =  test_norm['method'] #ck.get('train_norm_stats', dm_mlic.test_ds.input.attrs['norm_stats'])['method']
+
+
+                if  test_norm['method'] == "min_max":
                     x_min = test_norm["params"]["x_min"].astype(mlic_test_arr.dtype)
                     x_max = test_norm["params"]["x_max"].astype(mlic_test_arr.dtype)    
                     mlic_test_arr = (mlic_test_arr - x_min) / (x_max - x_min)
-                elif test_norm_method == "mean_std":
+                elif test_norm['method'] == "mean_std":
                     mean = test_norm['params']["mean"].astype(mlic_test_arr.dtype)
                     std = test_norm['params']["std"].astype(mlic_test_arr.dtype)
                     mlic_test_arr = (mlic_test_arr - mean) / std
-                elif test_norm_method == "mean_std_along_depth":
+                elif test_norm['method'] == "mean_std_along_depth":
                     mean = test_norm['params']["mean_along_depth"].astype(mlic_test_arr.dtype)
                     std = test_norm['params']["std_along_depth"].astype(mlic_test_arr.dtype)
                     mlic_test_arr = (mlic_test_arr - mean) / std
@@ -507,10 +607,13 @@ def compute_and_save(
 
                     # Unnormalize per batch
                     batch_recon = rv_batch['x_hat'].detach().cpu().numpy()
+
                     
                     # Free GPU memory immediately after copying to CPU
                     del x_batch, rv_batch
                     torch.cuda.empty_cache()
+
+
                     
                     batch_recon = utils.unorm_ssp_arr_3D(batch_recon, test_norm)
                     # Prepare batch-wise augmented_da
@@ -524,13 +627,17 @@ def compute_and_save(
                     ).data
                     #batch_test_ssp_arr = batch_recon
 
-                    b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
-                    batch_test_ssp_arr = filtfilt(b, a, batch_test_ssp_arr, axis=1).astype(batch_recon.dtype)
+                    # b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
+                    # batch_test_ssp_arr = filtfilt(b, a, batch_test_ssp_arr, axis=1).astype(batch_recon.dtype)
 
                     reconstructed_arr[start_idx:end_idx] = batch_test_ssp_arr
                     # Compute metrics per batch
                     batch_truth = metric_datatest[start_idx:end_idx]
-                    batch_metrics.append(compute_metrics_for_arrays(batch_truth, batch_test_ssp_arr, depth_array))
+
+                    if crop_slice > 0:
+                        batch_metrics.append(compute_metrics_for_arrays(batch_truth[:, :, crop_slice:-crop_slice, crop_slice:-crop_slice], batch_test_ssp_arr[:, :, crop_slice:-crop_slice, crop_slice:-crop_slice], depth_array))
+                    else:
+                        batch_metrics.append(compute_metrics_for_arrays(batch_truth, batch_test_ssp_arr, depth_array))
                     
                     # Free batch memory
                     del batch_recon, batch_augmented_da, batch_test_ssp_arr, batch_truth
@@ -600,7 +707,11 @@ def compute_and_save(
                     print("Selecting best/worst examples for model:", dict_model_name, " at CR:", cr)
                 data_dict[dict_model_name][cr] = {}
                 for metric_name in ["RMSE", "F1_score", "ECS", "R2"]:
-                    data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, reconstructed_arr, depth_array, metric_name)
+
+                    if crop_slice > 0:
+                        data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest[:, :, crop_slice:-crop_slice, crop_slice:-crop_slice], reconstructed_arr[:, :, crop_slice:-crop_slice, crop_slice:-crop_slice], depth_array, metric_name)
+                    else:
+                        data_dict[dict_model_name][cr][metric_name] = get_best_worst_random(metric_datatest, reconstructed_arr, depth_array, metric_name)
                 
                 data_dict[dict_model_name][cr]['selected'] = {
                     't_lat': ((t_idx, lat_idx), metric_datatest[t_idx, :, lat_idx, :], reconstructed_arr[t_idx, :, lat_idx, :].copy()),  # .copy() to avoid keeping ref to full array
@@ -996,19 +1107,19 @@ def compute_and_save(
     # Save outputs
     out_dir = Path(out_pickle_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / 'model_metrics_enatl_test.pkl', 'wb') as f:
+    with open(out_dir / 'model_metrics_enatl_natl_unorm_ck_train.pkl', 'wb') as f:
         pickle.dump(model_metrics, f)
-    with open(out_dir / 'data_dict_enatl_test.pkl', 'wb') as f:
+    with open(out_dir / 'data_dict_enatl_natl_unorm_ck_train.pkl', 'wb') as f:
         pickle.dump(data_dict, f)
     print(f'Saved model_metrics and data_dict to {out_dir}')
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument('--dm-mlic-pkl', default="/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_good_split.pkl") #enatl_dm_157_196_256_good_split #  #"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_good_split.pkl")
-    p.add_argument('--dm-cae-pkl', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_141_240_good_split.pkl')#)
-    p.add_argument('--mlic-base-dir', default="/Odyssey/private/o23gauvr/code/FASCINATION/outputs/Tensorboard/")#"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/Tensorboard")#"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/")#/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/    #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/test/MLIC #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#'/Odyssey/private/o23gauvr/code/MLIC/experiments') #'/Odyssey/private/o23gauvr/code/MLIC/experiments')  #'/Odyssey/private/o23gauvr/code/MLIC/experiments')#'/Odyssey/private/o23gauvr/code/MLIC/experiments/keep')
-    p.add_argument('--other-ckpt-base', default="") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE") #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE') #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE' #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE_visu_icassp")#
+    p.add_argument('--dm-mlic-pkl', default="/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_157_196_256_norm_per_split.pkl") #enatl_dm_157_196_256_good_split #  #"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_good_split.pkl")
+    p.add_argument('--dm-cae-pkl', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_140_240_good_split.pkl')#)
+    p.add_argument('--mlic-base-dir', default="/Odyssey/private/o23gauvr/code/MLIC/experiments/")#/Odyssey/private/o23gauvr/code/MLIC/experiments #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/")#/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/    #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/test/MLIC #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#'/Odyssey/private/o23gauvr/code/MLIC/experiments') #'/Odyssey/private/o23gauvr/code/MLIC/experiments')  #'/Odyssey/private/o23gauvr/code/MLIC/experiments')#'/Odyssey/private/o23gauvr/code/MLIC/experiments/keep')
+    p.add_argument('--other-ckpt-base', default="") #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE") #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE') #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE' #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE_visu_icassp")#
     p.add_argument('--out-pickle-dir', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle')
     p.add_argument('--device', default='cuda')
     p.add_argument('--verbose', action='store_true', default=True, help='Enable verbose prints and progress bars')
@@ -1026,7 +1137,8 @@ def main():
         args.out_pickle_dir,
         device=args.device,
         verbose=args.verbose,
-        unique_name=args.unique_name
+        unique_name=args.unique_name,
+        crop_slice=15
     )
 
 

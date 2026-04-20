@@ -118,7 +118,7 @@ if __name__ == "__main__":
     use_4D_dif_pca = False #or xp == "autoencoder_V2"
     pooling_dim = "spatial" if xp == "autoencoder_V2" else "all"
     min_components = 1
-    max_components = 20 
+    max_components = 200 
     n_layers = 4
     gpu = 0
     # cfg_path = f"config/xp/{xp}.yaml"
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     # test_ssp_arr = natl_test_data.data
     
     # test_ssp_tens = torch.tensor(test_ssp_arr, dtype=getattr(torch, cfg.dtype), device=device)
-    dm_cae_path = '/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_141_240_good_split.pkl'
+    dm_cae_path = '/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_157_196_256_norm_per_split.pkl'
     print("loading datamodule and generating train and test datasets")
     with open(dm_cae_path, 'rb') as f:
         dm_cae = pickle.load(f)
@@ -163,7 +163,7 @@ if __name__ == "__main__":
 
     depth_array = dm_cae.depth_array
     train_norm_stats = dm_cae.train_ds.input.attrs['norm_stats']
-    test_norm_stats = dm_cae.test_ds.input.attrs['norm_stats']
+    test_norm_stats = dm_cae.test_ds.input.attrs['norm_stats']  #train_norm_stats #
     train_arr = dm_cae.train_ds.input.data.copy()
     test_arr = dm_cae.test_ds.input.data.copy()
     train_ssp_arr = unorm_ssp_arr_3D(train_arr, train_norm_stats)
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     ecs_truth_idx = np.argmax(test_ssp_arr, axis=1)
     ecs_truth = depth_array[ecs_truth_idx]
     model_metrics = {}
-    for n_components in tqdm([1,2,3,4,5,6,7,8,9,10,15,20,50,100,157], unit="components", desc="Computing PCA components", disable=not(verbose)):
+    for n_components in tqdm([5], unit="components", desc="Computing PCA components", disable=not(verbose)):   #1,2,3,4,5,6,7,8,9,10,15,20,50,100,157
         pca = PCA(n_components=n_components, svd_solver='auto')
         if xp == "autoencoder_V2":
             train_data = train_ssp_arr.transpose(0, 2, 3, 1).reshape(-1, train_ssp_arr.shape[1])
@@ -241,7 +241,7 @@ if __name__ == "__main__":
                 arr2 = cubic_interpolate_along_axis(pca_unreduced_test_ssp_arr, 161, axis=2)
                 arr1_t = torch.tensor(arr1, dtype=torch.float64)
                 arr2_t = torch.tensor(arr2, dtype=torch.float64)
-                msssim = compute_msssim(arr1_t, arr2_t)
+                msssim = np.nan #compute_msssim(arr1_t, arr2_t)
             except Exception as e:
                 print(f"MS-SSIM computation failed: {e}")
                 msssim = np.nan

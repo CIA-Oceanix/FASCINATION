@@ -51,6 +51,7 @@ class AEDatamodule(pl.LightningDataModule):
         dtype_str='float32',
         space_ratio_init: float = 0.2,
         shuffle: bool = True,
+        normalize_per_split: bool = False,
         seed: int = 42,
     ):
         """
@@ -72,6 +73,9 @@ class AEDatamodule(pl.LightningDataModule):
             NOTE: CAE method removed.
         dtype_str : str
             numpy dtype string, e.g. 'float32'
+        normalize_per_split : bool
+            If True, compute normalization parameters separately for each split (train, val, test).
+            If False, use test_norm parameter to control normalization behavior. Default: False.
         """
         super().__init__()
 
@@ -91,6 +95,7 @@ class AEDatamodule(pl.LightningDataModule):
         self.dl_kw = dl_kw
         self.norm_stats = norm_stats
         self.test_norm = test_norm
+        self.normalize_per_split = normalize_per_split
         self.test_norm_stats = {"method": norm_stats.get("method", None), "params": None}
         self.rgb = rgb
         self.manage_nan = manage_nan
@@ -455,36 +460,88 @@ class AEDatamodule(pl.LightningDataModule):
                 # CAE-based rgb method removed — raise error if user requests it
                 raise RuntimeError("rgb method 'CAE' is removed. Only 'depth_layers' is supported if rgb.use is True.")
 
-        # 5) compute normalization statistics from train only
-        # prepare train numpy array for stats: ensure shape (time, z, lat, lon)
-        train_arr = train_da.data  # numpy ndarray
-        # if there are NaNs remaining, keep nan-aware stats
-        if self.verbose:
-            print("Computing normalization stats from train DA...")
-        if self.norm_stats.get("params") is None or any(v is None for v in (self.norm_stats.get("params") or {}).values()):
-            self._get_train_norm_stats(train_arr, self.norm_stats, verbose=False)
-        if self.test_norm == "on_train":
-            self.test_norm_stats = self.norm_stats
-        elif self.test_norm == "on_test":
-            self._get_train_norm_stats(test_da.data, self.test_norm_stats, verbose=False)
-        # 6) apply normalization to both DAs (use same params)
-        if self.verbose:
-            print("Applying normalization to train/test DAs...")
-        train_arr = self._apply_normalization_to_data(train_da.data, self.norm_stats)
-        test_arr = self._apply_normalization_to_data(test_da.data, self.test_norm_stats)
+        # 5) compute normalization statistics before splitting (for backward compatibility)
+        # This is needed because test_norm="on_test" computes stats from the full test_da (before splitting)
+        # if not self.normalize_per_split and self.test_norm == "on_test":
+        #     # Compute test_norm_stats from full test_da before splitting
+        #     if self.verbose:
+        #         print("Computing normalization stats from full test DA (before splitting)...")
+        #     self.test_norm_stats = self.norm_stats.copy()
+        #     self.test_norm_stats["params"] = {}
+        #     self._get_train_norm_stats(test_da.data, self.test_norm_stats, verbose=False)
+        #     self.test_norm_stats["norm_from"] = "full_natl"
 
-        # 2) spatio-temporal subsample based on n_profiles (per DA)
-        train_da[:] = train_arr
-        test_da[:] = test_arr
+        # 6) spatio-temporal subsample based on n_profiles (per DA) - BEFORE normalization
         if self.verbose:
             print("Selecting days for train/test DAs...")
         train_da = self._split_da_along_time(train_da, days_ratio=self.train_time_ratio)
         val_da, test_da = self._split_da_along_time(test_da, days_ratio=(self.val_time_ratio, self.test_time_ratio), n_gap=7)
 
+        # 7) compute and apply normalization after split
+        if self.verbose:
+            print(f"Computing and applying normalization (normalize_per_split={self.normalize_per_split})...")
+        
+        if self.normalize_per_split:
+            # Compute normalization stats separately for each split
+            train_norm_stats = self.norm_stats.copy()
+            val_norm_stats = self.norm_stats.copy()
+            test_norm_stats = self.norm_stats.copy()
+            
+            # Compute stats from each split
+            train_arr = train_da.data
+            if self.verbose:
+                print("  Computing normalization stats from train split...")
+            if train_norm_stats.get("params") is None or any(v is None for v in (train_norm_stats.get("params") or {}).values()):
+                self._get_train_norm_stats(train_arr, train_norm_stats, verbose=False)
+            train_norm_stats["norm_from"] = "train"
+            
+            val_arr = val_da.data
+            if self.verbose:
+                print("  Computing normalization stats from val split...")
+            val_norm_stats["params"] = {}
+            self._get_train_norm_stats(val_arr, val_norm_stats, verbose=False)
+            val_norm_stats["norm_from"] = "val"
+            
+            test_arr = test_da.data
+            if self.verbose:
+                print("  Computing normalization stats from test split...")
+            test_norm_stats["params"] = {}
+            self._get_train_norm_stats(test_arr, test_norm_stats, verbose=False)
+            test_norm_stats["norm_from"] = "test"
+            
+            # Apply normalization to each split with its own stats
+            train_da[:] = self._apply_normalization_to_data(train_da.data, train_norm_stats)
+            train_da.attrs['norm_stats'] = train_norm_stats
+            
+            val_da[:] = self._apply_normalization_to_data(val_da.data, val_norm_stats)
+            val_da.attrs['norm_stats'] = val_norm_stats
+            
+            test_da[:] = self._apply_normalization_to_data(test_da.data, test_norm_stats)
+            test_da.attrs['norm_stats'] = test_norm_stats
+        else:
+            # Use the original test_norm logic for backward compatibility
+            if self.verbose:
+                print("  Computing normalization stats from train split...")
+            train_arr = train_da.data
+            if self.norm_stats.get("params") is None or any(v is None for v in (self.norm_stats.get("params") or {}).values()):
+                self._get_train_norm_stats(train_arr, self.norm_stats, verbose=False)
+            self.norm_stats["norm_from"] = "train"
+            
+            if self.test_norm == "on_train":
+                self.test_norm_stats = self.norm_stats.copy()
+                self.test_norm_stats["norm_from"] = "train"
+            # else: test_norm == "on_test" - stats already computed above before splitting
+            
+            # Apply normalization
+            if self.verbose:
+                print("  Applying normalization to train/val/test splits...")
+            train_da[:] = self._apply_normalization_to_data(train_da.data, self.norm_stats)
+            val_da[:] = self._apply_normalization_to_data(val_da.data, self.test_norm_stats)
+            test_da[:] = self._apply_normalization_to_data(test_da.data, self.test_norm_stats)
 
 
 
-        # 7) assign normalized data back to DataArrays
+        # 8) assign normalized data back to DataArrays
         if self.verbose:
             print("Reconstructing normalized train/test DAs...")
         train_da = train_da.astype(required_dtype)
@@ -504,9 +561,11 @@ class AEDatamodule(pl.LightningDataModule):
         val_da.attrs['original_space_coords'] = val_lat_lon
         test_da.attrs['original_space_coords'] = test_lat_lon
 
-        train_da.attrs['norm_stats'] = self.norm_stats
-        val_da.attrs['norm_stats'] = self.norm_stats if self.test_norm == "on_train" else self.test_norm_stats
-        test_da.attrs['norm_stats'] = self.test_norm_stats if self.test_norm == "on_test" else self.norm_stats
+        # norm_stats are already attached in step 6 if normalize_per_split, otherwise attach here
+        if not self.normalize_per_split:
+            train_da.attrs['norm_stats'] = self.norm_stats
+            val_da.attrs['norm_stats'] = self.norm_stats if self.test_norm == "on_train" else self.test_norm_stats
+            test_da.attrs['norm_stats'] = self.test_norm_stats if self.test_norm == "on_test" else self.norm_stats
 
 
         if self.verbose:
@@ -591,7 +650,7 @@ if __name__ == "__main__":
         batch_size = 4
         rgb = {"use":False, "method":"CAE"} #PCA
         chn = "3" if rgb["use"] else "157"
-        dm_path = f"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_{chn}_196_256_norm_on_test_good_split.pkl"
+        dm_path = f"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_{chn}_196_256_norm_on_test.pkl"
 
         data_path ={"enatl": "/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc",
                     "natl": "/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc"}
@@ -606,6 +665,7 @@ if __name__ == "__main__":
             rgb=rgb,
             dtype_str="float32",
             shuffle=True,
+            normalize_per_split=True
             )
 
         datamodule.setup()
