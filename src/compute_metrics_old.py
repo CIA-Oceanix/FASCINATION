@@ -616,8 +616,8 @@ def compute_and_save(
         # ckpt_files += list(Path(model_path).rglob('best_checkpoint_f1.pth.tar'))
         # ckpt_files += list(Path(model_path).rglob('best_checkpoint_bpp_loss.pth.tar'))
 
-        ckpt_files = list(Path(model_path).rglob('best_checkpoint_f1.pth.tar'))
-        ckpt_files += list(Path(model_path).rglob('best_checkpoint_rmse.pth.tar'))
+        #ckpt_files = list(Path(model_path).rglob('best_checkpoint_f1.pth.tar'))
+        ckpt_files = list(Path(model_path).rglob('best_checkpoint_ecs.pth.tar'))
 
 
         if not ckpt_files:
@@ -908,9 +908,9 @@ def compute_and_save(
                     x = torch.tensor(mlic_test_arr[:, start_idx:end_idx, :, :].copy()).to(device, dtype=getattr(torch, dm.dtype_str))
                     with torch.no_grad():
                         rv = net(x,season_idx,sst_test_norm)
-                    bits = compute_total_bits(rv)   
+                    bits = compute_total_bits(rv)
                     numel = rv['x_hat'].numel()
-                    original_bits = numel * rv['x_hat'].element_size() * 8
+                    original_bits = numel * 8
                     total_bits += bits
                     total_elements += numel
                     total_original_bits += original_bits
@@ -969,7 +969,7 @@ def compute_and_save(
     # This block loads the specific original MLIC checkpoint the user asked for,
     # runs inference in the same triple-channel loop as the RGB MLIC above,
     # and registers the outputs and bitrate info under the name 'original_mlicc'.
-    orig_mlicc_ckpt = "/Odyssey/private/o23gauvr/code/MLIC/checkpoints/mlicpp_mse_q5_2960000.pth.tar"
+    orig_mlicc_ckpt = "" #"/Odyssey/private/o23gauvr/code/MLIC/checkpoints/mlicpp_mse_q5_2960000.pth.tar"
     if MLICPlusPlus is not None and Path(orig_mlicc_ckpt).exists() and orig_mlicc_ckpt != "":
         
         if verbose:
@@ -1004,7 +1004,7 @@ def compute_and_save(
                     rv = rgb_mlic_net(x)
                 bits = compute_total_bits(rv)
                 numel = rv['x_hat'].numel()
-                original_bits = numel * rv['x_hat'].element_size() * 8
+                original_bits = numel * 8
                 total_bits += bits
                 total_elements += numel
                 total_original_bits += original_bits
@@ -1348,9 +1348,9 @@ def compute_and_save(
     # Save outputs
     out_dir = Path(out_pickle_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / 'model_metrics_test_1.pkl', 'wb') as f:
+    with open(out_dir / 'model_metrics_test_cae_test_norm.pkl', 'wb') as f:
         pickle.dump(model_metrics, f)
-    with open(out_dir / 'data_dict_test_1.pkl', 'wb') as f:
+    with open(out_dir / 'data_dict_test_cae_test_norm.pkl', 'wb') as f:
         pickle.dump(data_dict, f)
     print(f'Saved model_metrics and data_dict to {out_dir}')
 
@@ -1359,7 +1359,7 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--dm-pkl', default="/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_157_196_256_norm_per_split.pkl") #enatl_dm_157_196_256_good_split #  #"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_dm_157_196_256_good_split.pkl")
     p.add_argument('--mlic-base-dir', default="") #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/ICUA/MLIC # #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/ICUA/MLIC #/Odyssey/private/o23gauvr/code/MLIC/experiments/ #/Odyssey/private/o23gauvr/code/MLIC/experiments #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/")#/Odyssey/private/o23gauvr/code/FASCINATION/outputs/eusipco/MLIC/    #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/test/MLIC #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp") #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/MLIC++/icassp")#'/Odyssey/private/o23gauvr/code/MLIC/experiments') #'/Odyssey/private/o23gauvr/code/MLIC/experiments')  #'/Odyssey/private/o23gauvr/code/MLIC/experiments')#'/Odyssey/private/o23gauvr/code/MLIC/experiments/keep')
-    p.add_argument('--other-ckpt-base', default="") #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE # #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE") #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE") #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE') #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE' #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE_visu_icassp")#
+    p.add_argument('--other-ckpt-base', default="/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/AE_CNN/cr_1000") #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE # #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE") #/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE") #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE') #'/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE' #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/CAE_visu_icassp")#
     p.add_argument('--out-pickle-dir', default='/Odyssey/private/o23gauvr/code/FASCINATION/pickle')
     p.add_argument('--compute-pca', action='store_true', default=False, help='Whether to compute PCA models with various n_components and pooling')
     p.add_argument('--device', default='cuda')

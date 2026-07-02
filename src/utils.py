@@ -17,6 +17,10 @@ import sys
 from scipy.interpolate import interp1d
 from scipy.ndimage import convolve
 from pytorch_msssim import ms_ssim
+from types import ModuleType, FunctionType
+from gc import get_referents
+
+BLACKLIST = type, ModuleType, FunctionType
 
 running_path = "/Odyssey/private/o23gauvr/code/FASCINATION/"
 os.chdir(running_path)
@@ -98,9 +102,9 @@ def model_setup(lit_model,
 
     lit_model.model_AE = lit_model.initiate_model(lit_model.model_name, lit_model.model_hparams, batch)
 
-    if lit_model.depth_pre_treatment.get("method") == "pca":
-        pca = dm.depth_pre_treatment.get("fitted_pca")
-        lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=batch.shape, device=batch.device, dtype=getattr(torch,dm.dtype_str))     
+    # if lit_model.depth_pre_treatment.get("method") == "pca":
+    #     pca = dm.depth_pre_treatment.get("fitted_pca")
+    #     lit_model.dif_pca_4D = DF.Differentiable4dPCA(pca, batch_shape=batch.shape, device=batch.device, dtype=getattr(torch,dm.dtype_str))     
     
     return lit_model
 
@@ -152,6 +156,23 @@ def loading_datamodule(dm):
                 
     return train_ssp_arr, test_ssp_arr, dm
 
+
+def getsize(obj):
+    """sum size of object & members."""
+    if isinstance(obj, BLACKLIST):
+        raise TypeError('getsize() does not take argument of type: '+ str(type(obj)))
+    seen_ids = set()
+    size = 0
+    objects = [obj]
+    while objects:
+        need_referents = []
+        for obj in objects:
+            if not isinstance(obj, BLACKLIST) and id(obj) not in seen_ids:
+                seen_ids.add(id(obj))
+                size += sys.getsizeof(obj)
+                need_referents.append(obj)
+        objects = get_referents(*need_referents)
+    return size
 
 
 def save_checkpoint(state, dir_path = "/Odyssey/private/o23gauvr/code/MLIC/experiments",filename="checkpoint.pth.tar"):
@@ -252,6 +273,31 @@ def unorm_ssp_arr_3D(ssp_arr:np.array, norm_stats, verbose = False):
 
             
     return ssp_unorm_arr
+
+
+
+def norm_ssp_arr_3D(ssp_arr:np.array, norm_stats, verbose = False):
+    
+    if verbose:
+        print(norm_stats['method'])
+
+    if norm_stats['method'] == "mean_std_along_depth":
+        
+        mean,std = norm_stats['params']["mean_along_depth"].astype(ssp_arr.dtype), norm_stats['params']["std_along_depth"].astype(ssp_arr.dtype)
+        if len(ssp_arr.shape) == 1:
+            std = std.squeeze()
+            mean = mean.squeeze()
+        ssp_norm_arr = (ssp_arr-mean)/std
+        
+    elif norm_stats['method'] == "mean_std":
+        mean,std = norm_stats['params']["mean"].astype(ssp_arr.dtype), norm_stats['params']["std"].astype(ssp_arr.dtype)
+        ssp_norm_arr = (ssp_arr-mean)/std
+    
+    elif norm_stats['method'] == "min_max":
+        x_min,x_max = norm_stats['params']['x_min'].astype(ssp_arr.dtype),norm_stats['params']['x_max'].astype(ssp_arr.dtype) #dm.norm_stats['params'].values()
+        ssp_norm_arr =(ssp_arr-x_min)/(x_max-x_min)
+            
+    return ssp_norm_arr
 
 
 def cosanneal_lr_adamw(self, lr, T_max, weight_decay=0.):

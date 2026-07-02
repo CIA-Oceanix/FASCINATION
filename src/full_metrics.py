@@ -27,6 +27,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+from scipy.spatial.distance import cdist
 
 from scipy.stats import wasserstein_distance
 
@@ -35,13 +36,13 @@ from dtaidistance import dtw
 
 from scipy.ndimage import gaussian_filter1d
 
-
-
-from FASCINATION.src.utils import unorm_ssp_arr_3D
+from FASCINATION.src.utils import unorm_ssp_arr_3D, get_cfg_from_ckpt_path, load_model
 
 from sklearn.decomposition import PCA
 
 import pandas as pd
+
+from FASCINATION.src.compression_nsr_analysis import *
 
 
 from scipy.stats import pearsonr
@@ -141,6 +142,83 @@ def compute_bpe(out_net, num_pixels) -> float:
     ).item()
 
 
+def apply_pooling_upsample_to_pca(pca_ae: np.ndarray, ssp_truth_shape: tuple, n_layer_pooling: int, pooling_mode: str = "mean") -> np.ndarray:
+    """
+    Apply spatial pooling and upsampling to PCA-transformed data using numpy/scipy, then inverse transform.
+    Works entirely with numpy arrays using skimage.measure.block_reduce and scipy.interpolate.RectBivariateSpline.
+    
+    Args:
+        pca_ae: flattened PCA-transformed array with shape (batch*lat*lon, n_components)
+        ssp_truth_shape: tuple of original spatial shape (batch, depth, lat, lon)
+        n_layer_pooling: number of pooling layers to apply (e.g., 3)
+        pca: fitted PCA object with inverse_transform method
+        pooling_mode: "mean" for average pooling or "max" for max pooling
+        
+    Returns:
+        reconstructed: data in shape (batch, depth, lat, lon) after pooling/upsampling and inverse transform
+    """
+    from skimage.measure import block_reduce
+    from scipy.interpolate import RectBivariateSpline
+    
+    batch, depth, lat, lon = ssp_truth_shape
+    n_components = pca_ae.shape[1]
+    
+    # Reshape from (batch*lat*lon, n_components) to (batch, lat, lon, n_components)
+    pca_ae_reshaped = pca_ae.reshape(batch, lat, lon, n_components)
+    
+    # Transpose to (batch, n_components, lat, lon) for spatial pooling
+    pca_ae_spatial = pca_ae_reshaped.transpose(0, 3, 1, 2)  # (batch, n_components, lat, lon)
+    
+    # Apply pooling and upsampling for each batch and component
+    pooled_upsampled_list = []
+    
+    for b in range(batch):
+        component_list = []
+        for c in range(n_components):
+            data_2d = pca_ae_spatial[b, c, :, :]  # (lat, lon)
+            
+            # Apply pooling layers
+            pooled_data = data_2d.copy()
+            for _ in range(n_layer_pooling):
+                block_size = 2
+                if pooling_mode == "mean":
+                    pooled_data = block_reduce(pooled_data, block_size=(block_size, block_size), func=np.mean)
+                else:  # max
+                    pooled_data = block_reduce(pooled_data, block_size=(block_size, block_size), func=np.max)
+            
+            # Upsample back to original size using RectBivariateSpline
+            pooled_h, pooled_w = pooled_data.shape
+
+            
+            # Create coordinate arrays for the pooled data
+            y_old = np.arange(pooled_h)
+            x_old = np.arange(pooled_w)
+            
+            # Create RectBivariateSpline interpolator (cubic by default, kx=ky=3)
+            spl = RectBivariateSpline(y_old, x_old, pooled_data, kx=min(3, pooled_data.shape[0]-1), ky=min(3, pooled_data.shape[1]-1))
+            
+            # Create new coordinate arrays for upsampled data
+            y_new = np.linspace(0, pooled_h - 1, lat)
+            x_new = np.linspace(0, pooled_w - 1, lon)
+            
+            # Interpolate to original size
+            upsampled_data = spl(y_new, x_new, grid=True)
+            
+            component_list.append(upsampled_data)
+        
+        # Stack components and convert to (n_components, lat, lon)
+        pooled_upsampled_list.append(np.array(component_list))
+    
+    # Concatenate batches: (batch, n_components, lat, lon)
+    pooled_upsampled_np = np.array(pooled_upsampled_list)
+    
+    # Reshape to flattened form (batch*lat*lon, n_components) for inverse transform
+    pooled_upsampled_flat = pooled_upsampled_np.transpose(0, 2, 3, 1).reshape(-1, n_components)
+    
+    return pooled_upsampled_flat
+
+
+
 def get_rmse_df_deciles(rmse_da: xr.DataArray, plot_path: Path, metric_type: str = "SSP") -> pd.DataFrame:
 
     # Flatten rmse_z and get valid (non-NaN) values with indices
@@ -186,11 +264,11 @@ def get_rmse_df_deciles(rmse_da: xr.DataArray, plot_path: Path, metric_type: str
     return df_deciles
 
 
-def plot_rmse_per_depth(rmse_da: xr.DataArray, depth_array: np.ndarray, plot_path: Path, metric_type: str = "SSP"): 
+def plot_rmse_per_depth(truth_da: xr.DataArray, ae_da: xr.DataArray, depth_array: np.ndarray, plot_path: Path, metric_type: str = "SSP"): 
 
     plt.figure(figsize=(8, 10))
-    rmse_depth = rmse_da.mean(dim=["time", "lat", "lon"]).values
-    std_depth = rmse_da.std(dim=["time", "lat", "lon"]).values
+    rmse_depth = np.sqrt(np.mean((truth_da - ae_da) ** 2, axis=(0, 2, 3)))
+    std_depth = (truth_da-ae_da).std(axis=(0,2,3))
     plt.plot(rmse_depth, depth_array)
     plt.fill_betweenx(depth_array,
                         rmse_depth - std_depth,
@@ -204,8 +282,6 @@ def plot_rmse_per_depth(rmse_da: xr.DataArray, depth_array: np.ndarray, plot_pat
     plt.tight_layout()
     plt.savefig(plot_path / metric_type.lower() / "rmse_per_depth.png", dpi=150, bbox_inches='tight')
     plt.show()
-
-
 
 
 
@@ -356,7 +432,7 @@ def plot_fft_analysis(power_da_truth, power_da_ae, freqs, plot_path: Path, metri
     plt.xlabel("Frequency (1/m)")
     plt.ylabel("Mean Power")
     plt.title("Mean Power Spectrum Comparison")
-    plt.text(0.05, 0.95, textstr, transform=plt.gca().transAxes, 
+    plt.text(0.95, 0.85, textstr, transform=plt.gca().transAxes, 
              fontsize=11, verticalalignment='top',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     plt.legend()
@@ -371,7 +447,7 @@ def plot_fft_analysis(power_da_truth, power_da_ae, freqs, plot_path: Path, metri
     plt.xlabel("Frequency (1/m)")
     plt.ylabel("Power Ratio")  
     plt.title(f"Mean Power Spectrum Ratio (AE/Truth) - {metric_type}")
-    plt.text(0.05, 0.95, textstr, transform=plt.gca().transAxes, 
+    plt.text(0.95, 0.85, textstr, transform=plt.gca().transAxes, 
              fontsize=11, verticalalignment='top',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
     plt.legend()
@@ -557,7 +633,7 @@ def cdist_extremum(profile_idx, flat_truth_ext, flat_ae_ext, depth):
     if len(truth_idx) == 0 or len(ae_idx) == 0:
         return np.nan
 
-    D = torch.cdist(
+    D = cdist(
         depth[truth_idx][:,None],
         depth[ae_idx][:,None]
     )
@@ -567,8 +643,8 @@ def cdist_extremum(profile_idx, flat_truth_ext, flat_ae_ext, depth):
 def get_extremum_position_error(ssp_truth, ssp_ae, depth: np.ndarray, profile_idx: int) -> float:
 
     # Compute extrema masks
-    ext_truth = get_min_max_idx(ssp_truth.values, axs=1, pad=True).astype(bool)
-    ext_ae = get_min_max_idx(ssp_ae.values, axs=1, pad=True).astype(bool)
+    ext_truth = get_min_max_idx(ssp_truth, axs=1, pad=True).astype(bool)
+    ext_ae = get_min_max_idx(ssp_ae, axs=1, pad=True).astype(bool)
 
     # Flatten exactly like your DTW code
     flat_truth_ext = ext_truth.transpose(0,2,3,1).reshape(-1, ext_truth.shape[1])
@@ -583,6 +659,40 @@ def get_extremum_position_error(ssp_truth, ssp_ae, depth: np.ndarray, profile_id
 
     error_arr = np.array(error_arr).reshape(ssp_truth.shape[0], ssp_truth.shape[2], ssp_truth.shape[3])
     return error_arr
+
+
+def process_model_in_batches(model, data_tensor, batch_size=4, dim=0, device='cuda'):
+    """
+    Process large tensors through model in batches to avoid OOM.
+    
+    Args:
+        model: PyTorch model
+        data_tensor: Input tensor
+        batch_size: Number of samples per batch
+        dim: Dimension along which to batch (0=time, 2=lat, 3=lon)
+        device: Device to use
+        
+    Returns:
+        numpy array of model outputs concatenated
+    """
+    results = []
+    n_samples = data_tensor.shape[dim]
+    
+    with torch.no_grad():
+        for i in tqdm(range(0, n_samples, batch_size), desc="Processing batches"):
+            end_idx = min(i + batch_size, n_samples)
+            
+            # Create slice for the batch
+            slices = [slice(None)] * len(data_tensor.shape)
+            slices[dim] = slice(i, end_idx)
+            
+            batch_data = data_tensor[tuple(slices)]
+            batch_output = model(batch_data).detach().cpu().numpy()
+            results.append(batch_output)
+    
+    # Concatenate along the same dimension
+    output = np.concatenate(results, axis=dim)
+    return output
 
 
 def plot_cluster_metric(shape_cluster_coords: dict, metric_da: xr.DataArray, title: str, plot_path: Path, ylabel: str):
@@ -605,9 +715,9 @@ def plot_cluster_metric(shape_cluster_coords: dict, metric_da: xr.DataArray, tit
     for cluster_id, coords in shape_cluster_coords.items():
         # Extract values at cluster coordinates
         values = []
-        for lat, lon in coords:
+        for t, lat, lon in coords:
             try:
-                val = metric_da.isel(lat=lat, lon=lon).values
+                val = metric_da.isel(time=t, lat=lat, lon=lon).values
                 if np.isfinite(val).any():  # Only include finite values
                     if isinstance(val, np.ndarray):
                         values.extend(val[np.isfinite(val)])
@@ -657,46 +767,33 @@ def plot_cluster_metric(shape_cluster_coords: dict, metric_da: xr.DataArray, tit
 
 
 
-def plot_cluster_metric(shape_cluster_coords, da, title: str, plot_path: Path, ylabel: str):
-
-    mean_metric = da.mean().item()
-    # Calculate mean metric per cluster and create scatter plot
-    cluster_ids = []
-    mean_metric_list = []
-
-    for cluster_id, coords_list in tqdm(shape_cluster_coords.items()):
-        metric_values = []
-        for t, lat, lon in coords_list:
-            # Extract metric value at this coordinate
-            da = da.isel(time=t, lat=lat, lon=lon).values
-            # Only include valid (non-NaN) values
-            if np.isfinite(da):
-                metric_values.append(da)
-
-        if len(metric_values) > 0:
-            mean_metric = np.mean(metric_values)
-            cluster_ids.append(cluster_id)
-            mean_metric_list.append(mean_metric)
-
-    # Create scatter plot
-    plt.figure(figsize=(10, 6))
-    plt.scatter(cluster_ids, mean_metric_list, s=100, alpha=0.6, edgecolors='black')
-    plt.xlabel("Cluster ID")
-    plt.ylabel(ylabel)
-    plt.title(f"{title}\n(Mean across all clusters = {np.mean(mean_metric_list):.4f})")
-    plt.grid(alpha=0.3)
-    plt.xticks(cluster_ids)
-    plt.tight_layout()
-    plt.show()
-
 
 
 if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    mlic_ckpt=True
-    ckpt_file = Path("/Odyssey/private/o23gauvr/code/MLIC/experiments/test_enatl_natl_mse/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std/20260402_154931/checkpoints/best_checkpoint_bpp_loss.pth.tar")
-    xp_name = "mlic_basic_loss"
+    
+    model = "mlic"     #"mlic" #"cae" #pca"
+
+
+    if model == "mlic":
+        #ckpt_file = Path("/Odyssey/private/o23gauvr/code/MLIC/experiments/test_enatl_natl_mse/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std/20260402_154931/checkpoints/best_checkpoint_bpp_loss.pth.tar")
+        #ckpt_file = Path("/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/ICUA/MLIC/fixed_weight_loss_64_96_1.0_CR_1000.0_enatl_natl__mean_std/20260407_004827/checkpoints/best_checkpoint_rmse.pth.tar")
+        ckpt_file = Path("/Odyssey/private/o23gauvr/code/MLIC/experiments/test_enatl_natl_mean_std/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std/20260323_191653/checkpoints/best_checkpoint_ecs.pth.tar")
+        xp_name = "mlic_basic_loss" + "_cr_1000" + "_ecs_ckpt" + "_best_f1" + "_no_filtered" + "_z_uniform"
+    elif model == "cae":
+        ckpt_file = Path("/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE/pred_1_grad_0_max_pos_0_max_value_0_fft_0_weighted_1_inflection_pos_0_inflection_value_0/dense_True/pooling_Avg_on_dim_dense/channels_[5000, 3000, 1000, 10]/upsample_mode_trilinear/linear_layer_False/cr_100000/1_conv_per_layer/padding_cubic/interp_size_5/final_upsample_upsample/act_fn_None/use_final_act_fn_False/lr_0.001/normalization_mean_std_along_depth/manage_nan_supress_with_max_depth/2026-02-13_12-43/checkpoints/best_checkpoint_rmse.pth.tar")
+        xp_name = "cae_3_pool_10_test" + "_cr_1000" + "_rmse"
+    elif model == "pca":
+        ckpt_file = Path("")
+        xp_name = "pca_3_pool_10" + "_cr_10000"
+
+    
+
+    
+    
+    
+
     plot_path = Path("/Odyssey/private/o23gauvr/code/FASCINATION/imgs") / xp_name
     plot_path.mkdir(parents=True, exist_ok=True)
     
@@ -728,7 +825,7 @@ if __name__ == "__main__":
     ## LOAD CHECKPOINTS ##
 
     
-    if mlic_ckpt:
+    if model == "mlic":
         cfg = parse_experiment_config(ckpt_file)
         N = cfg.get('N', 192)
         M = cfg.get('M', 320)
@@ -787,14 +884,70 @@ if __name__ == "__main__":
         ssp_ae_da = ssp_truth_da.copy(data=ssp_ae)
 
 
+    elif model == "cae":
+        cfg = get_cfg_from_ckpt_path(str(ckpt_file), pprint=False)
+        ck = torch.load(ckpt_file, map_location=device)
+        test_norm = ck.get('norm_stats', None)
+        if test_norm['method'] == "min_max":
+            x_min = test_norm["params"]["x_min"].astype(ssp_truth.dtype)
+            x_max = test_norm["params"]["x_max"].astype(ssp_truth.dtype)    
+            ssp_truth_tens = (ssp_truth - x_min) / (x_max - x_min)
+        elif test_norm['method'] == "mean_std":
+            mean = test_norm['params']["mean"].astype(ssp_truth.dtype)
+            std = test_norm['params']["std"].astype(ssp_truth.dtype)
+            ssp_truth_tens = (ssp_truth - mean) / std
+        elif test_norm['method'] == "mean_std_along_depth":
+            mean = test_norm['params']["mean_along_depth"].astype(ssp_truth.dtype)
+            std = test_norm['params']["std_along_depth"].astype(ssp_truth.dtype)
+            ssp_truth_tens = (ssp_truth - mean) / std
+
+        
+        ssp_truth_tens = torch.tensor(ssp_truth_tens).to(device=device, dtype=getattr(torch,dm.dtype_str))
+        lit_model = load_model(str(ckpt_file), dm, ssp_truth_tens, verbose=False)
+
+        # Process in batches to avoid OOM
+        batch_size = 4  # Adjust based on GPU memory
+        print(f"Processing {ssp_truth_tens.shape[0]} samples in batches of {batch_size}...")
+        ssp_ae = process_model_in_batches(lit_model, ssp_truth_tens, batch_size=batch_size, dim=0, device=device)
+        print(f"✓ Processing complete. Output shape: {ssp_ae.shape}")
+
+        ssp_ae = unorm_ssp_arr_3D(ssp_ae, test_norm)
+        ssp_ae_da = ssp_truth_da.copy(data=ssp_ae)
+
+        cr = lit_model.model_AE.cr if hasattr(lit_model.model_AE, 'cr') else 1.0
+        bpe = lit_model.model_AE.bpe if hasattr(lit_model.model_AE, 'bpe') else 0.0
+
+
+    elif model == "pca":
+        n_components = 6
+        n_layer_pooling = 6
+        cr = 4**n_layer_pooling*ssp_truth.shape[1]/n_components 
+        pca = PCA(n_components=n_components, svd_solver='randomized', random_state=42)
+        train_ssp_unnorm = unorm_ssp_arr_3D(dm.train_ds.input.data.copy(), dm.train_ds.input.attrs['norm_stats'])
+        pca.fit(train_ssp_unnorm.transpose(0,2,3,1).reshape(-1, train_ssp_unnorm.shape[1]))
+        pca_ae = pca.transform(ssp_truth.transpose(0,2,3,1).reshape(-1, ssp_truth.shape[1]))
+        ssp_ae = apply_pooling_upsample_to_pca(
+            pca_ae,
+            ssp_truth_shape=ssp_truth.shape,
+            n_layer_pooling=n_layer_pooling,
+        )
+        ssp_ae = pca.inverse_transform(ssp_ae).reshape(ssp_truth.shape[0], ssp_truth.shape[2], ssp_truth.shape[3], ssp_truth.shape[1]).transpose(0,3,1,2)
+        ssp_ae_da = ssp_truth_da.copy(data=ssp_ae)
+
+
+
     ## POST PROCESSING ##
     crop_idx = slice(20,-20)
 
-    ssp_truth_da = ssp_truth_da.isel(lat=crop_idx,lon=crop_idx)
-    ssp_ae_da = ssp_ae_da.isel(lat=crop_idx,lon=crop_idx)
+    ssp_truth_da = ssp_truth_da.isel(lat=crop_idx,lon=crop_idx).isel(time=slice(None,None,2))
+    ssp_ae_da = ssp_ae_da.isel(lat=crop_idx,lon=crop_idx).isel(time=slice(None,None,2))
 
-    b, a = butter(N=2, Wn=0.1, btype='low', analog=False)
-    ssp_ae_da[:] = filtfilt(b, a, ssp_ae_da.data, axis=1).astype(ssp_ae_da.dtype)
+    z_uniform = np.linspace(float(ssp_truth_da.z.min()), float(ssp_truth_da.z.max()), len(ssp_truth_da.z))
+    ssp_truth_da = ssp_truth_da.interp(z=z_uniform)
+    ssp_ae_da = ssp_ae_da.interp(z=z_uniform)
+
+    # b, a = butter(N=2, Wn=0.1, btype='low', analog=False)
+    # ssp_ae_da[:] = filtfilt(b, a, ssp_ae_da.data, axis=1).astype(ssp_ae_da.dtype)
     
     ssp_truth = ssp_truth_da.values.astype(np.float32)
     ssp_ae = ssp_ae_da.values.astype(np.float32)
@@ -806,15 +959,33 @@ if __name__ == "__main__":
     rmse_da = np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).mean(dim="z", skipna=True))
     ssp_truth_std = ssp_truth_da.std(dim="z", skipna=True)
 
+
     
-    plot_rmse_per_depth(rmse_da, depth_array, plot_path=plot_path, metric_type="SSP")
+    plot_rmse_per_depth(ssp_truth_da, ssp_ae_da, depth_array, plot_path=plot_path, metric_type="SSP")
     plot_rmse_std(rmse_da, ssp_truth_std, plot_path=plot_path, metric_type="SSP")
 
     rmse_df_deciles = get_rmse_df_deciles(rmse_da, plot_path=plot_path, metric_type="SSP")
 
-    plot_cluster_metric(shape_cluster_coords, rmse_da, title="Mean RMSE per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="RMSE (m/s)")
-    plot_cluster_metric(shape_cluster_coords, rmse_da.isel(z=slice(0, mixing_layer_idx)), title=f"Mean RMSE per Shape-based cluster in mixing layer above {depth_array[mixing_layer_idx]} m", plot_path=plot_path / "ssp", ylabel="RMSE (m/s)")
+    #plot_cluster_metric(shape_cluster_coords, rmse_da, title="Mean RMSE per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="RMSE (m/s)")
+    #plot_cluster_metric(shape_cluster_coords, np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).isel(z=slice(0, mixing_layer_idx)).mean(dim="z", skipna=True)), title=f"Mean RMSE per Shape-based cluster in mixing layer above {int(depth_array[mixing_layer_idx])} m", plot_path=plot_path / "ssp", ylabel="RMSE (m/s)")
 
+
+    ### MAE ###
+    mae_da = np.abs(ssp_ae_da - ssp_truth_da).mean(dim="z", skipna=True)
+
+    #plot_cluster_metric(shape_cluster_coords, mae_da, title="Mean MAE per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="MAE (m/s)")
+    #plot_cluster_metric(shape_cluster_coords, np.abs(ssp_ae_da - ssp_truth_da).isel(z=slice(0, mixing_layer_idx)).mean(dim="z", skipna=True), title=f"Mean MAE per Shape-based cluster in mixing layer above {int(depth_array[mixing_layer_idx])} m", plot_path=plot_path / "ssp", ylabel="MAE (m/s)")
+
+
+    ### PSNR ###
+    # Compute PSNR per spatial location (max value from truth)
+    mse_per_location = ((ssp_ae_da - ssp_truth_da) ** 2).mean(dim="z", skipna=True)
+    max_val_ssp = float(np.nanmax(ssp_truth_da.values))
+    psnr_da = 20 * np.log10(max_val_ssp / np.sqrt(mse_per_location + 1e-10))
+    psnr_da = psnr_da.where(np.isfinite(psnr_da), np.nan)  # Handle any inf values
+    
+    #plot_cluster_metric(shape_cluster_coords, psnr_da, title="Mean PSNR per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="PSNR (dB)")
+    #plot_cluster_metric(shape_cluster_coords, 20 * np.log10(max_val_ssp / np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).isel(z=slice(0, mixing_layer_idx)).mean(dim="z", skipna=True) + 1e-10)), title=f"Mean PSNR per Shape-based cluster in mixing layer above {int(depth_array[mixing_layer_idx])} m", plot_path=plot_path / "ssp", ylabel="PSNR (dB)")
 
 
     ### ECS ###
@@ -823,14 +994,18 @@ if __name__ == "__main__":
     ecs = np.abs(depth_array[max_ssp_truth_idx] - depth_array[max_ssp_ae_idx])
     ecs_da = xr.DataArray(ecs, coords=rmse_da.coords, dims=rmse_da.dims)
 
-    plot_cluster_metric(shape_cluster_coords, ecs_da, title="Mean ECS per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="ECS (m)")
+    #plot_cluster_metric(shape_cluster_coords, ecs_da, title="Mean ECS per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="ECS (m)")
 
     ### EXTREMUM POSITION CDIST ###
     extremum_position_error_arr = get_extremum_position_error(ssp_truth, ssp_ae, depth_array, profile_idx=0)
     extremum_position_error_da = xr.DataArray(extremum_position_error_arr, coords=rmse_da.coords, dims=rmse_da.dims)
 
-    plot_cluster_metric(shape_cluster_coords, extremum_position_error_da, title="Mean Extremum Position CDist per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="Extremum Position Error (m)")
+    #plot_cluster_metric(shape_cluster_coords, extremum_position_error_da, title="Mean Extremum Position CDist per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="Extremum Position Error (m)")
 
+
+    ### Effective resolutions ###
+    nsr_depth = compute_nsr_along_depth(ssp_truth_da,ssp_ae_da, target_ratio=0.5)
+    nsr_map = compute_nsr_spatial_map(ssp_truth_da, ssp_ae_da, target_ratio=0.5)
 
 
     ### F1 SCORE ##
@@ -839,15 +1014,15 @@ if __name__ == "__main__":
     F1_score = get_f1_score(min_max_idx_truth, min_max_idx_ae, axs=1, kernel_size=10)
     f1_da = xr.DataArray(F1_score, coords=rmse_da.coords, dims=rmse_da.dims)
 
-    plot_cluster_metric(shape_cluster_coords, f1_da, title="Mean F1 Score per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="F1 Score")
-    plot_cluster_metric(shape_cluster_coords, f1_da.isel(z=slice(0, mixing_layer_idx)), title=f"Mean F1 Score per Shape-based cluster in mixing layer above {depth_array[mixing_layer_idx]} m", plot_path=plot_path / "ssp", ylabel="F1 Score")
+    #plot_cluster_metric(shape_cluster_coords, f1_da, title="Mean F1 Score per Shape-based cluster", plot_path=plot_path / "ssp", ylabel="F1 Score")
 
 
     ### PEARSON CORRELATION ##
     pears = pearsonr(ssp_truth.transpose(1,0,2,3).reshape(ssp_truth.shape[1], -1), ssp_ae.transpose(1,0,2,3).reshape(ssp_ae.shape[1], -1))
     pearson_da = xr.DataArray(pears.statistic.reshape(rmse_da.shape), coords=rmse_da.coords, dims=rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, pearson_da, title="Mean Pearson Correlation per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="Pearson r")
+    #plot_cluster_metric(shape_cluster_coords, pearson_da, title="Mean Pearson Correlation per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="Pearson r")
     
+
     ### R² SCORE ##
     ss_res = ((ssp_ae_da - ssp_truth_da) ** 2).sum()
     ss_tot = ((ssp_truth_da - ssp_truth_da.mean()) ** 2).sum()
@@ -857,12 +1032,12 @@ if __name__ == "__main__":
         coords=rmse_da.coords,
         dims=rmse_da.dims
     )
-    plot_cluster_metric(shape_cluster_coords, r2_da, title="Mean R² Score per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="R²")
+    #plot_cluster_metric(shape_cluster_coords, r2_da, title="Mean R² Score per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="R²")
 
     ### DTW ###
     dtw_arr = get_dtw_arr(ssp_truth, ssp_ae)
     dtw_da = xr.DataArray(dtw_arr, coords=rmse_da.coords, dims=rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, dtw_da, title="Mean DTW per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="DTW Distance")
+    #plot_cluster_metric(shape_cluster_coords, dtw_da, title="Mean DTW per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="DTW Distance")
 
 
     ### FOURNIER ANALYSIS ###
@@ -874,23 +1049,25 @@ if __name__ == "__main__":
     log_truth = np.log(power_da_truth + eps)
     log_rec   = np.log(power_da_ae + eps)
     lsd = np.sqrt(np.mean((log_truth - log_rec)**2, axis=1))
+    lsd_da = xr.DataArray(lsd, coords=rmse_da.coords, dims=rmse_da.dims)
 
     peak_truth = np.argmax(power_da_truth.data, axis=1)
     peak_rec   = np.argmax(power_da_ae.data, axis=1)
     peak_freq_error = np.abs(freqs[peak_truth] - freqs[peak_rec])
+    peak_freq_error_da = xr.DataArray(peak_freq_error, coords=rmse_da.coords, dims=rmse_da.dims)
 
     wd_arr = get_wd_arr(power_da_truth.data, power_da_ae.data, freqs)
     wd_da = xr.DataArray(wd_arr, coords=rmse_da.coords, dims=rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, wd_da, title="Mean Wasserstein Distance per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="Wasserstein Distance (1/m)")
+    #plot_cluster_metric(shape_cluster_coords, wd_da, title="Mean Wasserstein Distance per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="Wasserstein Distance (1/m)")
 
     ### MS-SSIM ###
     ssim_1d_arr = compute_ssim(ssp_truth, ssp_ae)
     ssim_da = xr.DataArray(ssim_1d_arr, coords=rmse_da.coords, dims=rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, ssim_da, title="Mean 1D SSIM per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="SSIM")
+    #plot_cluster_metric(shape_cluster_coords, ssim_da, title="Mean 1D SSIM per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="SSIM")
 
     mssim_arr = compute_ms_ssim(ssp_truth, ssp_ae)
     mssim_da = xr.DataArray(mssim_arr, coords=rmse_da.coords, dims=rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, mssim_da, title="Mean MS-SSIM per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="MS-SSIM")
+    #plot_cluster_metric(shape_cluster_coords, mssim_da, title="Mean MS-SSIM per Shape-based cluster (SSP)", plot_path=plot_path / "ssp", ylabel="MS-SSIM")
 
 
     ### PCA ANALYSIS ###
@@ -912,23 +1089,43 @@ if __name__ == "__main__":
     ### GRADIENT RMSE ###
     grad_rmse_da = np.sqrt(((grad_ae_da - grad_truth_da) ** 2).mean(dim="z", skipna=True))
     
-    plot_rmse_per_depth(grad_rmse_da, depth_array, plot_path=plot_path, metric_type="Gradient")
+    
+    plot_rmse_per_depth(grad_truth_da, grad_ae_da, depth_array, plot_path=plot_path, metric_type="Gradient")
     plot_rmse_std(grad_rmse_da, grad_truth_std, plot_path=plot_path, metric_type="Gradient")
     
     grad_rmse_df_deciles = get_rmse_df_deciles(grad_rmse_da, plot_path=plot_path, metric_type="Gradient")
-    plot_cluster_metric(shape_cluster_coords, grad_rmse_da, title="Mean Gradient RMSE per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="RMSE (1/s) per m")
+    #plot_cluster_metric(shape_cluster_coords, grad_rmse_da, title="Mean Gradient RMSE per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="RMSE (1/s) per m")
+    #plot_cluster_metric(shape_cluster_coords, np.sqrt(((grad_ae_da - grad_truth_da) ** 2).isel(z=slice(0, mixing_layer_idx)).mean(dim="z", skipna=True)), title="Mean Gradient RMSE per Shape-based cluster in mixing layer above " + f"{int(depth_array[mixing_layer_idx])}" + " m", plot_path=plot_path / "gradient", ylabel="RMSE (1/s) per m")
+
+    ### GRADIENT MAE ###
+    grad_mae_da = np.abs(grad_ae_da - grad_truth_da).mean(dim="z", skipna=True)
+
+    #plot_cluster_metric(shape_cluster_coords, grad_mae_da, title="Mean Gradient MAE per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="MAE (1/s) per m")
+    #plot_cluster_metric(shape_cluster_coords, np.abs(grad_ae_da - grad_truth_da).isel(z=slice(0, mixing_layer_idx)).mean(dim="z", skipna=True), title="Mean Gradient MAE per Shape-based cluster in mixing layer above " + f"{int(depth_array[mixing_layer_idx])}" + " m", plot_path=plot_path / "gradient", ylabel="MAE (1/s) per m")
+
+
+    ### GRADIENT PSNR ###
+    # Compute PSNR per spatial location (max value from truth gradient)
+    grad_mse_per_location = ((grad_ae_da - grad_truth_da) ** 2).mean(dim="z", skipna=True)
+    max_val_grad = float(np.nanmax(np.abs(grad_truth_da.values)))
+    grad_psnr_da = 20 * np.log10(max_val_grad / np.sqrt(grad_mse_per_location + 1e-10))
+    grad_psnr_da = grad_psnr_da.where(np.isfinite(grad_psnr_da), np.nan)  # Handle any inf values
+    
+    #plot_cluster_metric(shape_cluster_coords, grad_psnr_da, title="Mean Gradient PSNR per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="PSNR (dB)")
+    #plot_cluster_metric(shape_cluster_coords, 20 * np.log10(max_val_grad / np.sqrt(((grad_ae_da - grad_truth_da) ** 2).isel(z=slice(0, mixing_layer_idx)).mean(dim="z", skipna=True) + 1e-10)), title="Mean Gradient PSNR per Shape-based cluster in mixing layer above " + f"{int(depth_array[mixing_layer_idx])}" + " m", plot_path=plot_path / "gradient", ylabel="PSNR (dB)")
+
 
     ### GRADIENT ECS ###
     max_grad_truth_idx = np.nanargmax(grad_truth_da.values, axis=1)
     max_grad_ae_idx = np.nanargmax(grad_ae_da.values, axis=1)
     grad_ecs = np.abs(depth_array[max_grad_truth_idx] - depth_array[max_grad_ae_idx])
     grad_ecs_da = xr.DataArray(grad_ecs, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_ecs_da, title="Mean Gradient ECS per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="ECS (m)")
+    #plot_cluster_metric(shape_cluster_coords, grad_ecs_da, title="Mean Gradient ECS per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="ECS (m)")
 
     ### GRADIENT EXTREMUM POSITION CDIST ##
     grad_extremum_position_error_arr = get_extremum_position_error(grad_truth_da.values, grad_ae_da.values, depth_array, profile_idx=0)
     grad_extremum_position_error_da = xr.DataArray(grad_extremum_position_error_arr, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_extremum_position_error_da, title="Mean Gradient Extremum Position Error per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="Error (m)")
+    #plot_cluster_metric(shape_cluster_coords, grad_extremum_position_error_da, title="Mean Gradient Extremum Position Error per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="Error (m)")
     
     ### GRADIENT F1 SCORE ##
     grad_truth = grad_truth_da.values.astype(np.float32)
@@ -938,12 +1135,17 @@ if __name__ == "__main__":
     grad_min_max_idx_ae = get_min_max_idx(grad_ae, axs=1, pad=False)
     grad_F1_score = get_f1_score(grad_min_max_idx_truth, grad_min_max_idx_ae, axs=1, kernel_size=10)
     grad_f1_da = xr.DataArray(grad_F1_score, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_f1_da, title="Mean Gradient F1 Score per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="F1 Score")
+    #plot_cluster_metric(shape_cluster_coords, grad_f1_da, title="Mean Gradient F1 Score per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="F1 Score")
     
+
+    ## EFFECTIVE RESOLUTION ##
+    grad_nsr_depth = compute_nsr_along_depth(grad_truth_da, grad_ae_da, target_ratio=0.5)
+    grad_nsr_map = compute_nsr_spatial_map(grad_truth_da, grad_ae_da, target_ratio=0.5)
+
     ### GRADIENT PEARSON CORRELATION ##
     grad_pears = pearsonr(grad_truth.transpose(1,0,2,3).reshape(grad_truth.shape[1], -1), grad_ae.transpose(1,0,2,3).reshape(grad_ae.shape[1], -1))
     grad_pearson_da = xr.DataArray(grad_pears.statistic.reshape(grad_rmse_da.shape), coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_pearson_da, title="Mean Gradient Pearson Correlation per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="Pearson r")
+    #plot_cluster_metric(shape_cluster_coords, grad_pearson_da, title="Mean Gradient Pearson Correlation per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="Pearson r")
     
     ### GRADIENT R² SCORE ###
     grad_ss_res = ((grad_ae_da - grad_truth_da) ** 2).sum()
@@ -954,12 +1156,12 @@ if __name__ == "__main__":
         coords=grad_rmse_da.coords,
         dims=grad_rmse_da.dims
     )
-    plot_cluster_metric(shape_cluster_coords, grad_r2_da, title="Mean Gradient R² Score per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="R²")
+    #plot_cluster_metric(shape_cluster_coords, grad_r2_da, title="Mean Gradient R² Score per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="R²")
     
     ### GRADIENT DTW ###
     grad_dtw_arr = get_dtw_arr(grad_truth, grad_ae)
     grad_dtw_da = xr.DataArray(grad_dtw_arr, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_dtw_da, title="Mean Gradient DTW per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="DTW Distance")
+    #plot_cluster_metric(shape_cluster_coords, grad_dtw_da, title="Mean Gradient DTW per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="DTW Distance")
     
     ### GRADIENT POWER SPECTRUM ###
     grad_power_da_truth, grad_freqs = compute_power_spectrum(grad_truth_da, dim="z", detrend=True, window=True)
@@ -971,26 +1173,28 @@ if __name__ == "__main__":
     grad_log_truth = np.log(grad_power_da_truth + grad_eps)
     grad_log_rec = np.log(grad_power_da_ae + grad_eps)
     grad_lsd = np.sqrt(np.mean((grad_log_truth - grad_log_rec)**2, axis=1))
+    grad_lsd_da = xr.DataArray(grad_lsd, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
     
     grad_peak_truth = np.argmax(grad_power_da_truth.data, axis=1)
     grad_peak_rec = np.argmax(grad_power_da_ae.data, axis=1)
     grad_peak_freq_error = np.abs(grad_freqs[grad_peak_truth] - grad_freqs[grad_peak_rec])
+    grad_peak_freq_error_da = xr.DataArray(grad_peak_freq_error, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
     
     grad_wd_arr = get_wd_arr(grad_power_da_truth.data, grad_power_da_ae.data, grad_freqs)
     grad_wd_da = xr.DataArray(grad_wd_arr, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_wd_da, title="Mean Gradient Wasserstein Distance per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="Wasserstein Distance (1/m)")
+    #plot_cluster_metric(shape_cluster_coords, grad_wd_da, title="Mean Gradient Wasserstein Distance per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="Wasserstein Distance (1/m)")
     
     ### GRADIENT MS-SSIM ###
     grad_ssim_1d_arr = compute_ssim(grad_truth, grad_ae)
     grad_ssim_da = xr.DataArray(grad_ssim_1d_arr, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_ssim_da, title="Mean Gradient 1D SSIM per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="SSIM")
+    #plot_cluster_metric(shape_cluster_coords, grad_ssim_da, title="Mean Gradient 1D SSIM per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="SSIM")
     
     grad_mssim_arr = compute_ms_ssim(grad_truth, grad_ae)
     grad_mssim_da = xr.DataArray(grad_mssim_arr, coords=grad_rmse_da.coords, dims=grad_rmse_da.dims)
-    plot_cluster_metric(shape_cluster_coords, grad_mssim_da, title="Mean Gradient MS-SSIM per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="MS-SSIM")
+    #plot_cluster_metric(shape_cluster_coords, grad_mssim_da, title="Mean Gradient MS-SSIM per Shape-based cluster", plot_path=plot_path / "gradient", ylabel="MS-SSIM")
     
     ### GRADIENT PCA ANALYSIS ###
-    grad_n_components = 6
+    grad_n_components = 15
     grad_pca = PCA(n_components=grad_n_components, svd_solver='randomized', random_state=42)
     grad_truth_pca = grad_pca.fit_transform(grad_truth.transpose(0,2,3,1).reshape(-1, grad_truth.shape[1]))
     grad_ae_pca = grad_pca.transform(grad_ae.transpose(0,2,3,1).reshape(-1, grad_ae.shape[1]))
@@ -1001,6 +1205,7 @@ if __name__ == "__main__":
     metrics_ds = xr.Dataset({
         # SSP Metrics
         'ssp_rmse': rmse_da,
+        'ssp_mae': mae_da,
         'ssp_ecs': ecs_da,
         'ssp_extremum_position_error': extremum_position_error_da,
         'ssp_f1_score': f1_da,
@@ -1010,11 +1215,13 @@ if __name__ == "__main__":
         'ssp_wasserstein_distance': wd_da,
         'ssp_ssim_1d': ssim_da,
         'ssp_ms_ssim': mssim_da,
-        'ssp_log_spectral_distance': lsd,
-        'ssp_peak_freq_error': peak_freq_error,
+        'ssp_psnr': psnr_da,
+        'ssp_log_spectral_distance': lsd_da,
+        'ssp_peak_freq_error': peak_freq_error_da,
         
         # Gradient Metrics
         'grad_rmse': grad_rmse_da,
+        'grad_mae': grad_mae_da,
         'grad_ecs': grad_ecs_da,
         'grad_extremum_position_error': grad_extremum_position_error_da,
         'grad_f1_score': grad_f1_da,
@@ -1024,8 +1231,9 @@ if __name__ == "__main__":
         'grad_wasserstein_distance': grad_wd_da,
         'grad_ssim_1d': grad_ssim_da,
         'grad_ms_ssim': grad_mssim_da,
-        'grad_log_spectral_distance': grad_lsd,
-        'grad_peak_freq_error': grad_peak_freq_error,
+        'grad_psnr': grad_psnr_da,
+        'grad_log_spectral_distance': grad_lsd_da,
+        'grad_peak_freq_error': grad_peak_freq_error_da,
     })
 
     # Optionally save to NetCDF
@@ -1034,42 +1242,59 @@ if __name__ == "__main__":
     print(f"✓ Saved metrics dataset to {output_file}")
     print(f"\nDataset summary:\n{metrics_ds}")
 
+    # Compute true overall RMSE (mathematically correct: sqrt(mean(all squared errors)))
+    rmse_overall = np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).mean().values)
+    grad_rmse_overall = np.sqrt(((grad_ae_da - grad_truth_da) ** 2).mean().values)
+
     # Print comprehensive metrics summary with units
     print("\n" + "="*100)
     print("COMPREHENSIVE METRICS SUMMARY")
     print("="*100)
     
     print("\n### SSP METRICS (Sound Speed Profile - unit: m/s) ###")
-    print(f"  RMSE:                         {rmse_da.mean().values:.6f} m/s")
+    print(f"  RMSE:                         {rmse_overall:.6f} m/s")
+    #print(f"  RMSE (spatial mean):          {rmse_da.mean().values:.6f} m/s")
+    print(f"  MAE:                          {mae_da.mean().values:.6f} m/s")
+    print(f"  PSNR (spatial mean):          {psnr_da.mean().values:.6f} dB")
     print(f"  R² Score:                     {r2_da.mean().values:.6f} (dimensionless)")
-    print(f"  Extremum Chromatic Shift:     {ecs_da.mean().values:.6f} m")
+    print(f"  Pearson Correlation:          {pearson_da.mean().values:.6f} (dimensionless)")
+    print(f"  ECS:                          {ecs_da.mean().values:.6f} m")
     print(f"  Extremum Position Error:      {extremum_position_error_da.mean().values:.6f} m")
     print(f"  F1 Score (Extrema):           {f1_da.mean().values:.6f} (dimensionless)")
-    print(f"  Pearson Correlation:          {pearson_da.mean().values:.6f} (dimensionless)")
     print(f"  Dynamic Time Warping:         {dtw_da.mean().values:.6f} (distance metric)")
     print(f"  Wasserstein Distance:         {wd_da.mean().values:.6f} (1/m)")
     print(f"  1D SSIM:                      {ssim_da.mean().values:.6f} (dimensionless)")
     print(f"  MS-SSIM:                      {mssim_da.mean().values:.6f} (dimensionless)")
-    print(f"  Log Spectral Distance:        {lsd.mean().values:.6f} (dimensionless)")
-    print(f"  Peak Frequency Error:         {peak_freq_error.mean().values:.6e} (1/m)")
+    print(f"  Log Spectral Distance:        {lsd_da.mean().values:.6f} (dimensionless)")
+    print(f"  Peak Frequency Error:         {peak_freq_error_da.mean().values:.6e} (1/m)")
+    print(f"  Effective Resolution (Depth):    {nsr_depth['resolution']:.2f} m")
+    print(f"  Effective Resolution (Spatial):  {nsr_map['resolution']:.2f} m")
     
     print("\n### GRADIENT METRICS (dSSP/dz - unit: 1/s) ###")
-    print(f"  RMSE:                         {grad_rmse_da.mean().values:.6f} (1/s) per m")
+    print(f"  RMSE (overall):               {grad_rmse_overall:.6f} (1/s) per m")
+    print(f"  RMSE (spatial mean):          {grad_rmse_da.mean().values:.6f} (1/s) per m")
+    print(f"  MAE (spatial mean):           {grad_mae_da.mean().values:.6f} (1/s) per m")
+    print(f"  PSNR (spatial mean):          {grad_psnr_da.mean().values:.6f} dB")
     print(f"  R² Score:                     {grad_r2_da.mean().values:.6f} (dimensionless)")
-    print(f"  Extremum Chromatic Shift:     {grad_ecs_da.mean().values:.6f} m")
+    print(f"  Pearson Correlation:          {grad_pearson_da.mean().values:.6f} (dimensionless)")
+    print(f"  ECS:                          {grad_ecs_da.mean().values:.6f} m")
     print(f"  Extremum Position Error:      {grad_extremum_position_error_da.mean().values:.6f} m")
     print(f"  F1 Score (Extrema):           {grad_f1_da.mean().values:.6f} (dimensionless)")
-    print(f"  Pearson Correlation:          {grad_pearson_da.mean().values:.6f} (dimensionless)")
     print(f"  Dynamic Time Warping:         {grad_dtw_da.mean().values:.6f} (distance metric)")
     print(f"  Wasserstein Distance:         {grad_wd_da.mean().values:.6f} (1/m)")
     print(f"  1D SSIM:                      {grad_ssim_da.mean().values:.6f} (dimensionless)")
     print(f"  MS-SSIM:                      {grad_mssim_da.mean().values:.6f} (dimensionless)")
-    print(f"  Log Spectral Distance:        {grad_lsd.mean().values:.6f} (dimensionless)")
-    print(f"  Peak Frequency Error:         {grad_peak_freq_error.mean().values:.6e} (1/m)")
-    
+    print(f"  Log Spectral Distance:        {grad_lsd_da.mean().values:.6f} (dimensionless)")
+    print(f"  Peak Frequency Error:         {grad_peak_freq_error_da.mean().values:.6e} (1/m)")
+    print(f"  Effective Resolution (Depth):    {grad_nsr_depth['resolution']:.2f} m")
+    print(f"  Effective Resolution (Spatial):  {grad_nsr_map['resolution']:.2f} m")
     print("\n### COMPRESSION METRICS ###")
     print(f"  Compression Ratio (CR):       {cr:.2f}")
-    print(f"  Bits Per Element (BPE):       {bits / rv_batch['x_hat'].numel():.6f} bits/element")
+    try:
+        bpe_value = bits / rv_batch['x_hat'].numel()
+    except:
+        bpe_value = bpe if 'bpe' in locals() else 0.0
+    print(f"  Bits Per Element (BPE):       {bpe_value:.6f} bits/element")
     
     print("\n" + "="*100)
 

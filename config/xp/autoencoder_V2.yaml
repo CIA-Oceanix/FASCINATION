@@ -16,6 +16,8 @@ normalization:
     mean: null 
     std: null 
 
+xp_name: cr_1000 
+
 
 data_name: enatl #natl
 
@@ -48,12 +50,12 @@ trainer:
   logger: 
     _target_: pytorch_lightning.loggers.tensorboard.TensorBoardLogger
     save_dir: ${root_save_dir}  #/DATASET/envs/o23gauvr/outputs/AE_V2/ #/homes/o23gauvr/Documents/thèse/code/FASCINATION/outputs/AE_V2/
-    name: ${model.model_name}    #ecs_${model.loss_weight.ecs_weight}
+    name: ${model.model_name}/${xp_name}    #ecs_${model.loss_weight.ecs_weight}
     version: pred_${model.loss_weight.prediction_weight}_grad_${model.loss_weight.gradient_weight}_max_pos_${model.loss_weight.max_position_weight}_max_value_${model.loss_weight.max_value_weight}_fft_${model.loss_weight.fft_weight}_weighted_${model.loss_weight.weighted_weight}_inflection_pos_${model.loss_weight.min_max_position_weight}_inflection_value_${model.loss_weight.min_max_value_weight}/${model_config.save_dir.${model_architecture}}/lr_${model.opt_fn.lr}/normalization_${datamodule.norm_stats.method}/manage_nan_${datamodule.manage_nan}/${now:%Y-%m-%d_%H-%M}  #/n_profiles_${datamodule.n_profiles}/depth_pre_treatment_${datamodule.depth_pre_treatment.method}_n_components_${datamodule.depth_pre_treatment.params}_norm_on_${datamodule.depth_pre_treatment.norm_on}_train_on_${datamodule.depth_pre_treatment.train_on}
     log_graph : True
 
   # changed: match snapshot training length
-  max_epochs: 700 #1
+  max_epochs: 1 #1
 
   callbacks:
     - _target_: pytorch_lightning.callbacks.LearningRateMonitor
@@ -104,25 +106,37 @@ trainer:
   # dtype_str: ${dtype}  
 
 datamodule:
-  _target_: src.autoencoder_datamodule_good_split.AEDatamodule
-  data_name: ${data_name}
-  dl_kw:
-    batch_size: 16
+  _target_: src.autoencoder_datamodule_natl_enatl.AEDatamodule
+  dl_kw:  
+    batch_size: 4
     num_workers: 10
   norm_stats:
-    method: mean_std_along_depth
+    method: min_max #mean_std_along_depth
+  test_norm: on_test
   manage_nan: supress_with_max_depth
-  reshape: null
-  rgb: 
+  normalize_per_split: True
+  reshape: ['factor_64']
+  rgb:
     use: False
     method: null
-  space_ratio_init: 0.2
   dtype_str: ${dtype}
-  shuffle: True
-  seed: 42
 
-
-
+  # _target_: src.autoencoder_datamodule_good_split.AEDatamodule
+  # data_name: ${data_name}
+  # dl_kw:
+  #   batch_size: 16
+  #   num_workers: 10
+  # norm_stats:
+  #   method: mean_std_along_depth
+  # manage_nan: supress_with_max_depth
+  # reshape: null
+  # rgb: 
+  #   use: False
+  #   method: null
+  # space_ratio_init: 0.2
+  # dtype_str: ${dtype}
+  # shuffle: True
+  # seed: 42
 
 model:
   _target_: src.autoencoder_V2.AutoEncoder
@@ -134,12 +148,12 @@ model:
     _target_: src.utils.cosanneal_lr_adamw
     _partial_: true
     lr: 1e-3
-    T_max: 100 #${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
+    T_max: 150 #${trainer.max_epochs} #${trainer.max_epochs} #${trainer.max_epochs} #100000
     weight_decay: 1e-3 #0 #1e-3
   loss_weight:
     method: factor #factor #value
     prediction_weight: 1 #10 #0.5 #0.01 #1
-    weighted_weight: 1 #100 
+    weighted_weight: 0 #100 
     gradient_weight: 0 #1000000
     error_treshold_weight: 0
     max_position_weight: 0 #0.01 
@@ -174,13 +188,14 @@ model_config:
       channels_list:
       - 5000
       - 3000
-      - 50
+      - 1000
+      - 10
       kernel_list: 3
       n_conv_per_layer: 1
       padding:
         mode: cubic #"reflect" #linear #cubic
         interp_size: 5
-      act_fn_str: null #null #LeakyRelu
+      act_fn_str: Sigmoid #null #LeakyRelu
       use_final_act_fn: False
       final_upsample_str: upsample #null #"upsample" #upsample #upsample_pooling
       upsample_mode: "trilinear" #nearest

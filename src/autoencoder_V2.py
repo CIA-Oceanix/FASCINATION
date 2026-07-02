@@ -77,6 +77,12 @@ class AutoEncoder(pl.LightningModule):
         self.norm_stats = self.trainer.datamodule.norm_stats  # includes "norm_location"
         if not self.norm_stats.get("norm_location"):
             self.norm_stats["norm_location"] = "datamodule"
+        
+        # Get computed normalization stats for validation/test unnormalization
+        self.train_norm_stats = self.trainer.datamodule.train_norm_stats if self.trainer.datamodule.train_norm_stats else self.norm_stats
+        self.val_norm_stats = self.trainer.datamodule.val_norm_stats if self.trainer.datamodule.val_norm_stats else self.norm_stats
+        self.test_norm_stats = self.trainer.datamodule.test_norm_stats if self.trainer.datamodule.test_norm_stats else self.norm_stats
+        
         self.depth_arr = self.trainer.datamodule.depth_array
         self.z_tens = torch.tensor(self.depth_arr, device=batch.device,dtype=batch.dtype)
 
@@ -279,7 +285,11 @@ class AutoEncoder(pl.LightningModule):
             "optimizer": optimizer.state_dict(),
             "scheduler": lr_scheduler.state_dict() if lr_scheduler is not None else None,
             "norm_stats": self.norm_stats,
+            "train_norm_stats": self.train_norm_stats,
+            "val_norm_stats": self.val_norm_stats,
+            "test_norm_stats": self.test_norm_stats,
             "depth_pre_treatment": self.depth_pre_treatment,
+            "model": self.model_name,
         }
         
         # Save best loss checkpoint
@@ -370,8 +380,10 @@ class AutoEncoder(pl.LightningModule):
                 ssp_reconstructed = self.dif_pca_4D.inverse_transform(ssp_reconstructed)
 
             if self.norm_stats["norm_location"] == "datamodule":
-                ssp_reconstructed = self.unorm(ssp_reconstructed)
-                ssp_truth = self.unorm(ssp_truth)
+                # Use validation/test norm stats for unnormalization
+                norm_stats_for_unorm = self.val_norm_stats if phase == "val" else self.test_norm_stats
+                ssp_reconstructed = self.unorm(ssp_reconstructed, norm_stats_for_unorm)
+                ssp_truth = self.unorm(ssp_truth, norm_stats_for_unorm)
             
 
 
@@ -475,28 +487,32 @@ class AutoEncoder(pl.LightningModule):
 
     
 
-    def unorm(self, ssp_tens):
-
+    def unorm(self, ssp_tens, norm_stats=None):
+        """Unnormalize the tensor using provided or default norm_stats."""
+        if norm_stats is None:
+            norm_stats = self.norm_stats
 
         if self.depth_pre_treatment.get("norm_on") == "components":
             ssp_tens = self.dif_pca_4D.transform(ssp_tens)
 
-        if self.norm_stats["method"] == "min_max":
-            x_min, x_max = self.norm_stats["params"]["x_min"], self.norm_stats["params"]["x_max"] 
+        if norm_stats["method"] == "min_max":
+            x_min = norm_stats["params"]["x_min"]
+            x_max = norm_stats["params"]["x_max"]
             ssp_tens = ssp_tens*(x_max - x_min) + x_min
             
-        elif self.norm_stats["method"] == "mean_std":
-            mean, std = self.norm_stats["params"]["mean"], self.norm_stats["params"]["std"] 
+        elif norm_stats["method"] == "mean_std":
+            mean = norm_stats["params"]["mean"]
+            std = norm_stats["params"]["std"]
             ssp_tens = ssp_tens*std + mean
 
-        elif self.norm_stats["method"] == "mean_std_along_depth":
-            mean, std = torch.tensor(self.norm_stats["params"]["mean"].reshape(1,-1,1,1), device = ssp_tens.device, dtype=ssp_tens.dtype),torch.tensor(self.norm_stats["params"]["std"].reshape(1,-1,1,1), device = ssp_tens.device, dtype=ssp_tens.dtype)
+        elif norm_stats["method"] == "mean_std_along_depth":
+            mean = torch.tensor(norm_stats["params"]["mean_along_depth"].reshape(1,-1,1,1), device=ssp_tens.device, dtype=ssp_tens.dtype)
+            std = torch.tensor(norm_stats["params"]["std_along_depth"].reshape(1,-1,1,1), device=ssp_tens.device, dtype=ssp_tens.dtype)
             ssp_tens = ssp_tens*std + mean
 
         if self.depth_pre_treatment.get("norm_on") == "components": 
             ssp_tens = self.dif_pca_4D.inverse_transform(ssp_tens)
 
-    
         return ssp_tens
     
 

@@ -7,12 +7,54 @@ import random
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
 import torch.utils.data
 from collections import namedtuple
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Dict
 import torch
 import pandas as pd
 import pickle
+from scipy.signal import butter, filtfilt
 
 TrainingItem = namedtuple('TrainingItem', ['input', 'tgt'])
+
+
+def get_seasonal_time_indices(da_time, season: str) -> np.ndarray:
+    """
+    Get time indices for a specific season.
+
+    Parameters
+    ----------
+    da_time : array-like
+        Time coordinate from an xarray DataArray.
+    season : str
+        One of: 'all', 'spring', 'summer', 'autumn', 'winter'.
+
+    Returns
+    -------
+    np.ndarray
+        Integer indices of timesteps belonging to the requested season.
+    """
+    if hasattr(da_time, 'values'):
+        time_vals = pd.to_datetime(da_time.values)
+    else:
+        time_vals = pd.to_datetime(da_time)
+
+    months = time_vals.month
+
+    if season == 'all':
+        return np.arange(len(time_vals))
+    elif season == 'spring':
+        return np.where((months >= 3) & (months <= 5))[0]
+    elif season == 'summer':
+        return np.where((months >= 6) & (months <= 8))[0]
+    elif season == 'autumn':
+        return np.where((months >= 9) & (months <= 11))[0]
+    elif season == 'winter':
+        return np.where((months == 12) | (months == 1) | (months == 2))[0]
+    else:
+        raise ValueError(
+            f"Unknown season: {season!r}. Must be one of: "
+            "'all', 'spring', 'summer', 'autumn', 'winter'"
+        )
+
 
 # Map month → season index
 def month_to_season(month):
@@ -44,13 +86,16 @@ class AEDatamodule(pl.LightningDataModule):
         self,
         dl_kw,
         norm_stats,
+        data_type = "ssp",
         test_norm: str = "on_train",
         manage_nan: str = "supress_with_max_depth",
         reshape=None,
         rgb={"use": False, "method": None},
         dtype_str='float32',
-        space_ratio_init: float = 0.2,
+        days_split={"method": "ratio", "value": (0.5, 0.5)},  # split test_da into val/test with this ratio
         shuffle: bool = True,
+        uniform_z: bool = False,
+        filtering: bool = False,
         normalize_per_split: bool = False,
         seed: int = 42,
     ):
@@ -79,9 +124,13 @@ class AEDatamodule(pl.LightningDataModule):
         """
         super().__init__()
 
-        data_path ={"enatl": "/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc",
-                    "natl": "/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc"}
-        
+        if data_type=="ssp":
+            data_path ={"enatl": "/Odyssey/public/enatl60/celerity/eNATL60_BLB002_sound_speed_regrid_0_botm.nc",
+                        "natl": "/Odyssey/public/natl60/celerity/NATL60GULF-CJM165_sound_speed_regrid_0_botm.nc"}
+        elif data_type=="temp":
+            data_path ={"enatl": "/Odyssey/public/enatl60/raw/eNATL60_BLB002_degraded_votemper_regrid_0_botm.nc",
+                        "natl": "/Odyssey/public/natl60/raw/NATL60GULF-CJM165_degraded_votemper_regrid.nc"}
+
         sst_path = {"enatl": "/Odyssey/public/enatl60/sst/eNATL60-BLB002-SST-2009-2010-1_20.nc",
                     "natl": "/Odyssey/public/natl60/sst/NATL60-CJM165-SST-2009-2010-1_20.nc"}
 
@@ -99,17 +148,20 @@ class AEDatamodule(pl.LightningDataModule):
         self.test_norm_stats = {"method": norm_stats.get("method", None), "params": None}
         self.rgb = rgb
         self.manage_nan = manage_nan
+        self.filtering = filtering
+        self.filter_cutoff = 0.1  # cutoff frequency for low-pass Butterworth
         self.n_profiles = None
         self.train_time_ratio = 1.0
-        self.val_time_ratio = 0.5
-        self.test_time_ratio = 0.5
+        # self.val_time_ratio = 0.5
+        # self.test_time_ratio = 0.5
         self.reshape = [] if reshape is None else reshape
         self.dtype_str = dtype_str
-        self.space_ratio = space_ratio_init
+        self.days_split = days_split
         self.time_ratio = 0.1
         self.seed = seed
         self.shuffle = shuffle
 
+        self.uniform_z = uniform_z
         self.depth_array = None
 
         # internal placeholders filled in setup
@@ -117,6 +169,11 @@ class AEDatamodule(pl.LightningDataModule):
         self.val_ds = None
         self.test_ds = None
         self.drop_last_batch = False
+        
+        # Normalization stats storage (computed during setup)
+        self.train_norm_stats = None
+        self.val_norm_stats = None
+        self.test_norm_stats = None
 
         self.verbose = True
 
@@ -197,8 +254,7 @@ class AEDatamodule(pl.LightningDataModule):
     def _split_da_along_time(
         self,
         da: xr.DataArray,
-        days_ratio: Union[float, Tuple[float, ...]],
-        n_gap: int = 7,
+        days_split: Dict,
     ) -> Union[xr.DataArray, List[xr.DataArray]]:
         """
         Subsample or split a DataArray along the time dimension.
@@ -207,12 +263,32 @@ class AEDatamodule(pl.LightningDataModule):
         ----------
         da : xr.DataArray
             Input data with a 'time' dimension.
-        days_ratio : float or tuple of floats
-            - float: subsample time with step = int(1 / days_ratio)
-            - tuple: return len(days_ratio) contiguous blocks whose sizes
-                    are proportional to the ratios and separated by n_gap
-        n_gap : int
-            Number of timesteps separating consecutive blocks
+        days_ratio : dict
+            A dict with keys ``method`` and ``value``:
+
+            - ``{"method": "subsample", "value": float}``
+                Subsample time with step = int(1 / value).  value must be in (0, 1].
+
+            - ``{"method": "ratio", "value": tuple of floats}``
+                Return len(value) contiguous blocks whose sizes are proportional to
+                the ratios and separated by n_gap.
+
+            - ``{"method": "season", "value": list of season specs}``
+                Return one DataArray per element.  Each element is either a season
+                string ('spring', 'summer', 'autumn', 'winter', 'all') or a tuple
+                of season strings to merge.  Example: [("spring", "summer"), "winter"]
+
+            - ``{"method": "alternate_days", "value": tuple of ints}``
+                Alternate between len(value) splits, assigning value[i] consecutive
+                days to split i, then skipping n_gap days, then moving to split i+1,
+                etc., cycling until the end of the time axis.
+                Example: value=(7, 60), n_gap=15 →
+                  7 days → split 0, 15-day gap, 60 days → split 1, 15-day gap,
+                  7 days → split 0, 15-day gap, …
+
+            n_gap : int
+                Number of timesteps skipped between blocks (used for ``ratio`` and
+                ``alternate_days`` modes; for ``season`` mode it trims boundaries).
 
         Returns
         -------
@@ -222,20 +298,30 @@ class AEDatamodule(pl.LightningDataModule):
         if "time" not in da.dims:
             raise ValueError("DataArray must have a 'time' dimension")
 
+        if not isinstance(days_split, dict) or "method" not in days_split or "value" not in days_split:
+            raise TypeError(
+                "days_split must be a dict with 'method' and 'value' keys. "
+                "Supported methods: 'subsample', 'ratio', 'season', 'alternate_days'."
+            )
+
+        method = days_split["method"]
+        value  = days_split["value"]
+        n_gap = days_split.get("n_gap", 0)
+
         # ------------------------------------------------------------------
         # Case 1 — simple subsampling
         # ------------------------------------------------------------------
-        if isinstance(days_ratio, float):
-            if not (0 < days_ratio <= 1):
-                raise ValueError("days_ratio must be in [0, 1]")
-            step = int(1 / days_ratio)
+        if method == "subsample":
+            if not isinstance(value, (int, float)) or not (0 < value <= 1):
+                raise ValueError("subsample value must be a float in (0, 1]")
+            step = int(1 / value)
             return da.isel(time=slice(0, None, step))
 
         # ------------------------------------------------------------------
         # Case 2 — contiguous block splits with gaps
         # ------------------------------------------------------------------
-        if isinstance(days_ratio, tuple):
-            ratios = list(days_ratio)
+        if method == "ratio":
+            ratios = list(value)
             n_sets = len(ratios)
 
             if any(r <= 0 for r in ratios):
@@ -267,7 +353,115 @@ class AEDatamodule(pl.LightningDataModule):
 
             return splits
 
-        raise TypeError("days_ratio must be a float or a tuple of floats")
+        # ------------------------------------------------------------------
+        # Case 3 — season-based splits with temporal gap enforcement
+        # ------------------------------------------------------------------
+        if method == "season":
+            days_ratio_list = value
+            if not isinstance(days_ratio_list, list):
+                raise TypeError("season value must be a list of season specs")
+            # Step 1: build raw sorted index sets per split
+            raw_indices: List[List[int]] = []
+            for season_spec in days_ratio_list:
+                if isinstance(season_spec, str):
+                    seasons = [season_spec]
+                elif isinstance(season_spec, tuple):
+                    seasons = list(season_spec)
+                else:
+                    raise TypeError(
+                        "Each element of the season list must be a str or a tuple of str, "
+                        f"got {type(season_spec)}"
+                    )
+                combined: set = set()
+                for s in seasons:
+                    combined.update(get_seasonal_time_indices(da.time, s).tolist())
+                raw_indices.append(sorted(combined))
+
+            # Step 2: enforce n_gap at every temporal boundary between splits
+            if n_gap > 0:
+                time_vals = pd.to_datetime(da.time.values)
+                gap_td = pd.Timedelta(days=n_gap)
+                half1 = n_gap // 2       # days trimmed from the earlier-ending split
+                half2 = n_gap - half1    # days trimmed from the later-starting split
+
+                # Build a global sorted list of (time_index, split_id)
+                tagged: List[tuple] = []
+                for split_id, idx_list in enumerate(raw_indices):
+                    for idx in idx_list:
+                        tagged.append((idx, split_id))
+                tagged.sort(key=lambda x: x[0])
+
+                to_remove: List[set] = [set() for _ in range(len(raw_indices))]
+
+                # Walk through consecutive pairs; act on every cross-split boundary
+                # whose timestamps are closer than n_gap days
+                for k in range(len(tagged) - 1):
+                    idx_k,  split_k  = tagged[k]
+                    idx_k1, split_k1 = tagged[k + 1]
+
+                    if split_k == split_k1:
+                        continue
+
+                    if (time_vals[idx_k1] - time_vals[idx_k]) >= gap_td:
+                        continue  # already far enough apart
+
+                    # Remove last half1 timesteps of split_k before this boundary
+                    count, pos = 0, k
+                    while pos >= 0 and count < half1:
+                        if tagged[pos][1] == split_k:
+                            to_remove[split_k].add(tagged[pos][0])
+                            count += 1
+                        pos -= 1
+
+                    # Remove first half2 timesteps of split_k1 after this boundary
+                    count, pos = 0, k + 1
+                    while pos < len(tagged) and count < half2:
+                        if tagged[pos][1] == split_k1:
+                            to_remove[split_k1].add(tagged[pos][0])
+                            count += 1
+                        pos += 1
+
+                final_indices = [
+                    [i for i in idx_list if i not in to_remove[sid]]
+                    for sid, idx_list in enumerate(raw_indices)
+                ]
+            else:
+                final_indices = raw_indices
+
+            return [da.isel(time=idx_list) for idx_list in final_indices]
+
+        # ------------------------------------------------------------------
+        # Case 4 — alternating day blocks
+        # ------------------------------------------------------------------
+        if method == "alternate_days":
+            block_sizes = list(value)
+            if self.rgb['use']:
+                day_block = len(self.depth_array)//3
+                block_sizes = [day_block*i for i in block_sizes]
+            n_splits = len(block_sizes)
+            if n_splits < 2:
+                raise ValueError("alternate_days value must contain at least 2 block sizes")
+            if any(b <= 0 for b in block_sizes):
+                raise ValueError("All block sizes in alternate_days must be positive integers")
+
+            T = da.sizes["time"]
+            split_indices: List[List[int]] = [[] for _ in range(n_splits)]
+
+            pos = 0
+            split_turn = 0
+            while pos < T:
+                block = block_sizes[split_turn]
+                end = min(pos + block, T)
+                split_indices[split_turn].extend(range(pos, end))
+                pos = end + n_gap
+                split_turn = (split_turn + 1) % n_splits
+
+            return [da.isel(time=idx_list) for idx_list in split_indices]
+
+        raise ValueError(
+            f"Unknown method {method!r}. "
+            "Must be one of: 'subsample', 'ratio', 'season', 'alternate_days'."
+        )
 
     def _factor_64_pad_interp(self, da: xr.DataArray):
         """If 'factor_64' in reshape: interpolate lat/lon so sizes are multiples of 64.
@@ -405,6 +599,14 @@ class AEDatamodule(pl.LightningDataModule):
         return train_da, val_da, test_da
 
 
+    def _uniform_depth(self, da: xr.DataArray):
+        """If uniform_z is True, interpolate along z to a uniform depth grid defined by self.depth_array."""
+        if not self.uniform_z:
+            return da
+
+        z_uniform = np.linspace(float(da.z.min()), float(da.z.max()), len(da.z))
+        return da.interp(z=z_uniform)
+
 
     def setup(self, stage=None):
         """
@@ -431,6 +633,12 @@ class AEDatamodule(pl.LightningDataModule):
             print("Managing NaNs for train/test DAs...")
         train_da = self._manage_nan_single_da(train_da)
         test_da = self._manage_nan_single_da(test_da)
+
+        # Uniform depth
+        if self.uniform_z:
+            train_da = self._uniform_depth(train_da)
+            test_da = self._uniform_depth(test_da)
+
 
         self.depth_array = train_da.z.values.copy()
 
@@ -460,22 +668,35 @@ class AEDatamodule(pl.LightningDataModule):
                 # CAE-based rgb method removed — raise error if user requests it
                 raise RuntimeError("rgb method 'CAE' is removed. Only 'depth_layers' is supported if rgb.use is True.")
 
+
+        # Filtering low band
+        if self.filtering:
+            if self.verbose:
+                print("Applying low-pass Butterworth filter to train/test DAs...")
+            # Design Butterworth filter
+            #b, a = butter(N=4, Wn=self.filter_cutoff, btype='low', fs=1.0)
+            b, a = butter(N=2, Wn=self.filter_cutoff, btype='low', analog=False)
+            # Apply filter along time axis for each depth/lat/lon point
+            train_da.data = filtfilt(b, a, train_da.data, axis=0)
+            test_da.data = filtfilt(b, a, test_da.data, axis=0)
+
+
         # 5) compute normalization statistics before splitting (for backward compatibility)
         # This is needed because test_norm="on_test" computes stats from the full test_da (before splitting)
-        # if not self.normalize_per_split and self.test_norm == "on_test":
-        #     # Compute test_norm_stats from full test_da before splitting
-        #     if self.verbose:
-        #         print("Computing normalization stats from full test DA (before splitting)...")
-        #     self.test_norm_stats = self.norm_stats.copy()
-        #     self.test_norm_stats["params"] = {}
-        #     self._get_train_norm_stats(test_da.data, self.test_norm_stats, verbose=False)
-        #     self.test_norm_stats["norm_from"] = "full_natl"
+        if not self.normalize_per_split and self.test_norm == "on_test":
+            # Compute test_norm_stats from full test_da before splitting
+            if self.verbose:
+                print("Computing normalization stats from full test DA (before splitting)...")
+            self.test_norm_stats = self.norm_stats.copy()
+            self.test_norm_stats["params"] = {}
+            self._get_train_norm_stats(test_da.data, self.test_norm_stats, verbose=False)
+            self.test_norm_stats["norm_from"] = "full_natl"
 
         # 6) spatio-temporal subsample based on n_profiles (per DA) - BEFORE normalization
         if self.verbose:
             print("Selecting days for train/test DAs...")
-        train_da = self._split_da_along_time(train_da, days_ratio=self.train_time_ratio)
-        val_da, test_da = self._split_da_along_time(test_da, days_ratio=(self.val_time_ratio, self.test_time_ratio), n_gap=7)
+        train_da = self._split_da_along_time(train_da, days_split={"method": "subsample", "value": self.train_time_ratio})
+        val_da, test_da = self._split_da_along_time(test_da, days_split=self.days_split)  #{"method": "season", "value": ["summer", ("autumn", "winter", "spring")]}
 
         # 7) compute and apply normalization after split
         if self.verbose:
@@ -483,41 +704,41 @@ class AEDatamodule(pl.LightningDataModule):
         
         if self.normalize_per_split:
             # Compute normalization stats separately for each split
-            train_norm_stats = self.norm_stats.copy()
-            val_norm_stats = self.norm_stats.copy()
-            test_norm_stats = self.norm_stats.copy()
+            self.train_norm_stats = self.norm_stats.copy()
+            self.val_norm_stats = self.norm_stats.copy()
+            self.test_norm_stats = self.norm_stats.copy()
             
             # Compute stats from each split
             train_arr = train_da.data
             if self.verbose:
                 print("  Computing normalization stats from train split...")
-            if train_norm_stats.get("params") is None or any(v is None for v in (train_norm_stats.get("params") or {}).values()):
-                self._get_train_norm_stats(train_arr, train_norm_stats, verbose=False)
-            train_norm_stats["norm_from"] = "train"
+            if self.train_norm_stats.get("params") is None or any(v is None for v in (self.train_norm_stats.get("params") or {}).values()):
+                self._get_train_norm_stats(train_arr, self.train_norm_stats, verbose=False)
+            self.train_norm_stats["norm_from"] = "train"
             
             val_arr = val_da.data
             if self.verbose:
                 print("  Computing normalization stats from val split...")
-            val_norm_stats["params"] = {}
-            self._get_train_norm_stats(val_arr, val_norm_stats, verbose=False)
-            val_norm_stats["norm_from"] = "val"
+            self.val_norm_stats["params"] = {}
+            self._get_train_norm_stats(val_arr, self.val_norm_stats, verbose=False)
+            self.val_norm_stats["norm_from"] = "val"
             
             test_arr = test_da.data
             if self.verbose:
                 print("  Computing normalization stats from test split...")
-            test_norm_stats["params"] = {}
-            self._get_train_norm_stats(test_arr, test_norm_stats, verbose=False)
-            test_norm_stats["norm_from"] = "test"
+            self.test_norm_stats["params"] = {}
+            self._get_train_norm_stats(test_arr, self.test_norm_stats, verbose=False)
+            self.test_norm_stats["norm_from"] = "test"
             
             # Apply normalization to each split with its own stats
-            train_da[:] = self._apply_normalization_to_data(train_da.data, train_norm_stats)
-            train_da.attrs['norm_stats'] = train_norm_stats
+            train_da[:] = self._apply_normalization_to_data(train_da.data, self.train_norm_stats)
+            train_da.attrs['norm_stats'] = self.train_norm_stats
             
-            val_da[:] = self._apply_normalization_to_data(val_da.data, val_norm_stats)
-            val_da.attrs['norm_stats'] = val_norm_stats
+            val_da[:] = self._apply_normalization_to_data(val_da.data, self.val_norm_stats)
+            val_da.attrs['norm_stats'] = self.val_norm_stats
             
-            test_da[:] = self._apply_normalization_to_data(test_da.data, test_norm_stats)
-            test_da.attrs['norm_stats'] = test_norm_stats
+            test_da[:] = self._apply_normalization_to_data(test_da.data, self.test_norm_stats)
+            test_da.attrs['norm_stats'] = self.test_norm_stats
         else:
             # Use the original test_norm logic for backward compatibility
             if self.verbose:
@@ -531,6 +752,10 @@ class AEDatamodule(pl.LightningDataModule):
                 self.test_norm_stats = self.norm_stats.copy()
                 self.test_norm_stats["norm_from"] = "train"
             # else: test_norm == "on_test" - stats already computed above before splitting
+            
+            # Store for model access
+            self.train_norm_stats = self.norm_stats
+            self.val_norm_stats = self.test_norm_stats
             
             # Apply normalization
             if self.verbose:
@@ -567,10 +792,10 @@ class AEDatamodule(pl.LightningDataModule):
             val_da.attrs['norm_stats'] = self.norm_stats if self.test_norm == "on_train" else self.test_norm_stats
             test_da.attrs['norm_stats'] = self.test_norm_stats if self.test_norm == "on_test" else self.norm_stats
 
-
-        if self.verbose:
-            print("Attaching SST data to train/test DAs...")
-        train_da, val_da, test_da = self._attach_sst(train_da, val_da, test_da)
+        if self.rgb.get("use", False):
+            if self.verbose:
+                print("Attaching SST data to train/test DAs...")
+            train_da, val_da, test_da = self._attach_sst(train_da, val_da, test_da)
 
         # store final processed DAs and create datasets
         if self.verbose:
@@ -663,7 +888,9 @@ if __name__ == "__main__":
             manage_nan="supress_with_max_depth",
             reshape=["factor_64"], #["factor_64"], #"RGB"
             rgb=rgb,
+            uniform_z=True,
             dtype_str="float32",
+            filtering=True,
             shuffle=True,
             normalize_per_split=True
             )
