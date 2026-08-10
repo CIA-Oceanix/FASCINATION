@@ -1,0 +1,493 @@
+\documentclass[11pt]{article}
+
+% ============================================================
+% Packages
+% ============================================================
+\usepackage[a4paper,margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\setlength{\emergencystretch}{3em}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+% ============================================================
+% Commands
+% ============================================================
+\newcommand{\x}{\mathbf{x}}
+\newcommand{\xb}{\mathbf{x}_{b}}
+\newcommand{\xh}{\widehat{\mathbf{x}}}
+\newcommand{\z}{\mathbf{z}}
+\newcommand{\rzero}{\mathbf{r}_{0}}
+\newcommand{\rone}{\mathbf{r}_{1}}
+\newcommand{\rtau}{\mathbf{r}_{t}}
+\newcommand{\rh}{\widehat{\mathbf{r}}_{\theta}}
+\newcommand{\emean}{\widehat{\mathbf{r}}_{\mathrm{mean}}}
+\newcommand{\eh}{\widehat{\mathbf{e}}_{\theta}}
+\newcommand{\y}{\mathbf{y}}
+\newcommand{\M}{\mathbf{M}}
+\newcommand{\Hobs}{\mathcal{H}}
+\newcommand{\Psit}{\Psi_{\theta}}
+\newcommand{\Ut}{U_{\psi}}
+\newcommand{\Dt}{D_{\phi}}
+\newcommand{\Et}{E_{\phi}}
+\newcommand{\Qt}{Q}
+\newcommand{\Cphi}{\mathcal{C}_{\phi}}
+\newcommand{\Lcal}{\mathcal{L}}
+
+% ============================================================
+% Title
+% ============================================================
+\title{
+Residual Flow Matching for Structure-Preserving Enhancement of Neural Ocean-Field Compression
+}
+
+\author{
+Author names
+}
+
+\date{}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+% Abstract
+% ============================================================
+\begin{abstract}
+High-resolution ocean simulations and analysis products are increasingly expensive to store and transmit. Learned compression offers an efficient representation, but aggressive compression may smooth dynamically or acoustically relevant structures, including local extrema and prominent vertical features. We introduce a codec-agnostic residual enhancement framework in which a frozen neural codec reconstructs a compressed background state $\xb$, and a second model estimates the missing residual $\rone=\x-\xb$. We evaluate deterministic U-Net correction, conditional residual flow matching, and a cascade combining a deterministic U-Net with a stochastic flow model. Six reference distributions are considered for flow initialization: Gaussian, scaled Gaussian, spatial high-pass, Fourier high-pass, Laplace, and Rademacher noise.
+
+The evaluation focuses on complementary measures of pointwise and structural fidelity: physical RMSE, weighted combined F1, F1 on prominent extrema, and prominence-weighted F1. Relative to the MLIC++ baseline, the best reconstruction-oriented configuration, U-Net plus scaled-Gaussian flow, reduces RMSE from $0.3946$ to $0.3678$, corresponding to a $6.8\%$ reduction. Pure flow models provide the strongest extrema reconstruction. Fourier high-pass flow increases weighted combined F1 from $0.5812$ to $0.6405$ ($+10.2\%$), while spatial high-pass flow increases the prominent-extrema F1 from $0.6910$ to $0.7590$ ($+9.8\%$) and the prominence-weighted F1 from $0.8236$ to $0.8611$ ($+4.6\%$). These results reveal a clear Pareto trade-off: deterministic components favor pointwise accuracy, whereas pure stochastic flows better preserve significant extrema. Among the tested cascades, U-Net plus high-pass flow provides the most balanced compromise between RMSE and structure-sensitive F1 scores.
+\end{abstract}
+
+% ============================================================
+% Key points
+% ============================================================
+\noindent\textbf{Key Points}
+\begin{itemize}[leftmargin=1.5em]
+    \item A frozen learned codec is interpreted as a compressed background, and a decoder-side model estimates the information lost during compression.
+    \item U-Net--flow cascades achieve the lowest pointwise reconstruction error; scaled-Gaussian initialization reduces RMSE by $6.8\%$ relative to MLIC++.
+    \item Pure flow models better recover extrema: Fourier high-pass flow improves weighted combined F1 by $10.2\%$.
+    \item Spatial high-pass flow gives the strongest prominent-extrema scores, improving prominent F1 by $9.8\%$ and prominence-weighted F1 by $4.6\%$.
+    \item The experiments identify a reproducible trade-off between pixelwise accuracy and structural fidelity rather than a single method that dominates all metrics.
+\end{itemize}
+
+% ============================================================
+\section{Introduction}
+
+Operational oceanography increasingly relies on high-resolution simulations, reanalyses, ensemble forecasts, and multivariate analysis products. These datasets may describe sea-surface variables, three-dimensional hydrographic fields, sound-speed structures, or acoustic proxies over large spatial and temporal domains. Their volume makes storage, transfer, and repeated manipulation costly, motivating the development of learned compression methods for geophysical data. Modern learned codecs combine nonlinear analysis and synthesis transforms, quantized latent variables, and learned entropy models \cite{balle2018variational,minnen2018joint}. Multi-reference context models such as MLIC and MLIC++ further improve latent entropy estimation while retaining practical decoding complexity \cite{jiang2023mlic,jiang2025mlicpp}.
+
+Neural compression algorithms are generally optimized through a rate--distortion objective. At a fixed rate, they can achieve low average reconstruction errors, but the decoded field may smooth or suppress small-scale structures. This limitation is related to the rate--distortion--perception trade-off: minimizing pointwise distortion alone does not guarantee the preservation of perceptually or structurally important information \cite{blau2019rethinking,mentzer2020high}. The issue is particularly important for oceanographic and acoustic applications, where local maxima, minima, sharp gradients, and vertically prominent features can control downstream physical diagnostics. Compact representations of sound-speed profiles, for example, must retain structured vertical variability rather than only minimize a global error \cite{bianco2017dictionary}. A reconstruction with a low RMSE may therefore remain scientifically inadequate if it fails to preserve these structures.
+
+Recent generative codecs use conditional diffusion, residual diffusion, or flow-based priors to reconstruct information that is not explicitly retained by a compressed representation \cite{ghouse2023residual,yang2023lossy,theis2022lossy,ke2025ultra,huang2026flowcodec}. We address this problem through residual enhancement. Let $\x$ denote the target ocean state and let a frozen neural codec $\Cphi$ produce a quantized latent representation $\z$ and decoded reconstruction $\xb$:
+\begin{equation}
+    \z = \Qt(\Et(\x)),
+    \qquad
+    \xb = \Dt(\z).
+\end{equation}
+The decoded field is treated as a compressed background rather than a complete reconstruction. The missing information is represented by
+\begin{equation}
+\boxed{
+    \rone = \x-\xb,
+    \qquad
+    \x=\xb+\rone.
+}
+\label{eq:main_decomposition}
+\end{equation}
+A residual model then predicts or samples an estimate $\rh$, yielding
+\begin{equation}
+\boxed{
+    \xh=\xb+\rh.
+}
+\label{eq:final_reconstruction_intro}
+\end{equation}
+Because the correction is performed on the decoder side and no additional residual bitstream is transmitted, the operating rate remains that of the base codec.
+
+The residual formulation supports two complementary strategies. A deterministic U-Net estimates the predictable component of the compression error and is expected to favor RMSE. A flow-matching model instead learns a conditional distribution of residual structures and can generate an ensemble of plausible corrections. A cascade combines both ideas by first removing the deterministic bias and then modeling the remaining stochastic residual.
+
+The main contribution of this work is not a new entropy model, but a systematic analysis of how residual-model architecture and flow reference distribution affect pointwise and structure-sensitive reconstruction. We focus on four metrics with distinct interpretations: physical RMSE, weighted combined F1, F1 on prominent extrema, and prominence-weighted F1. The results show that the optimal method depends on the scientific objective. U-Net--flow cascades provide the best RMSE, whereas pure high-frequency and heavy-tailed flows better recover extrema.
+
+The framework is codec-agnostic. MLIC++ is used as the representative compressor in the current experiments, but any learned codec returning a decoded state $\xb$ can be substituted. The transfer of natural-image codecs to scientific fields requires evaluation of spectra, extremes, coherent structures, and task-relevant quantities in addition to average distortion \cite{di2025survey,gomes2025lossy,mirowski2024neural,han2024cra5}. Observation conditioning can also be incorporated through masks, sparse measurements, or innovations; this extension is formulated below but is not used in the present no-observation experiments.
+
+% ============================================================
+\section{Related Work and Positioning}
+
+\subsection{Learned image compression}
+
+Learned image compression replaces fixed transforms and manually designed probability models with trainable nonlinear analysis and synthesis transforms. Scale hyperpriors communicate side information describing spatial variations in latent uncertainty \cite{balle2018variational}, while hierarchical latent priors combined with autoregressive context models improve entropy estimation \cite{minnen2018joint}.
+
+
+MLIC introduced multi-reference entropy modeling to exploit local, global, and channel-wise latent dependencies \cite{jiang2023mlic}. MLIC++ reduced the computational complexity of this strategy while retaining rich context modeling \cite{jiang2025mlicpp}. In the present work, MLIC++ is used as a representative base codec, but the residual formulation only requires a codec that produces a quantized representation $\z$ and a decoded background $\xb$.
+
+Generative compression further shows that minimizing pointwise distortion does not necessarily preserve perceptually or structurally meaningful information. HiFiC introduced an adversarial high-fidelity decoder \cite{mentzer2020high}, while the rate--distortion--perception framework formalized the trade-off between numerical distortion and perceptual quality \cite{blau2019rethinking}. Our results exhibit an analogous scientific trade-off: the configurations minimizing RMSE differ from those maximizing extrema-sensitive F1 scores.
+
+\subsection{Generative and residual compression}
+
+Several recent methods use generative models to reconstruct information absent from a compressed representation. Conditional diffusion decoders model the target distribution conditioned on compressed features \cite{yang2023lossy}, whereas diffusion-based compression can also be formulated by communicating a corrupted representation that is subsequently denoised \cite{theis2022lossy}. Compressed-feature initialization provides another way to constrain generative reconstruction with information retained by the codec \cite{li2024diffusion}.
+
+Residual generative approaches are more directly related to the present work. DIRAC augments an existing codec by applying diffusion to the difference between the original and compressed images \cite{ghouse2023residual}. Residual denoising diffusion models explicitly separate deterministic degradation correction from stochastic noise generation \cite{liu2024residual}. Semantic residual coding likewise decomposes reconstruction into a compact representation and a generative residual component \cite{ke2025ultra}, while DiffO considers single-step diffusion reconstruction at ultra-low bitrates \cite{park2025diffo}. More recently, FlowCodec separated latent compression from flow-based latent transport, demonstrating that a learned flow prior can refine a rate-constrained latent representation in one generative step \cite{huang2026flowcodec}.
+
+Our approach retains the decoded codec output as an explicit deterministic background and trains the second model only on the missing physical-field residual. It therefore makes the contribution of the residual correction measurable at a fixed transmitted rate and permits direct comparison between deterministic and stochastic residual estimators.
+
+\subsection{Diffusion, flow matching, and stochastic interpolants}
+
+Denoising diffusion probabilistic models learn a sequence of reverse denoising transitions from a simple reference distribution \cite{ho2020denoising}. Score-based generative modeling extends this construction to continuous-time stochastic differential equations and associated probability-flow ordinary differential equations \cite{song2020score}.
+
+Flow matching provides a simulation-free regression objective for learning continuous transport between source and target distributions \cite{lipman2022flow}. Rectified flow emphasizes approximately straight transport paths and efficient low-step sampling \cite{liu2022flow}. Stochastic interpolants provide a broader construction in which deterministic or stochastic transports are induced by user-defined interpolations between endpoint distributions \cite{albergo2022building}. In this work, these ideas are applied to the compression residual rather than to the complete ocean field, and the reference distribution is treated as an experimental variable.
+
+\subsection{Scientific and geophysical data compression}
+
+Scientific compression differs from natural-image compression because errors affecting task-relevant structures may be more consequential than spatially diffuse visual errors. Error-bounded scientific compression and its evaluation have been extensively reviewed \cite{di2025survey}, while recent work has examined the adaptation of neural compression methods to geospatial and Earth-observation analytics \cite{gomes2025lossy}.
+
+Neural compression has also been applied directly to atmospheric and climate states. Learned compression of multivariate atmospheric fields has been evaluated using spectral and extreme-event diagnostics in addition to pointwise reconstruction errors \cite{mirowski2024neural}. Efficient variational-transformer architectures have also been proposed for strongly compressed ERA5 representations \cite{han2024cra5}. More broadly, quantity-of-interest-aware data-reduction methods indicate that scientifically important regions and events may require a nonuniform allocation of reconstruction error \cite{li2025machine}.
+
+
+Recent work on learned scientific compression argues that codec residuals possess statistical and structural properties that differ from those of the original fields and should therefore receive a dedicated representation \cite{zhu2026residual}. This observation directly supports learning the distribution of $\rone=\x-\xb$ rather than applying a generative model to the complete state.
+
+\subsection{Neural and generative data assimilation}
+
+Neural data-assimilation methods replace or augment components of traditional variational assimilation with trainable priors and learned optimization schemes. A general framework for jointly learning variational data-assimilation models and solvers has been developed, including architectures commonly associated with 4DVarNet \cite{fablet2021learning}.
+
+Generative data assimilation represents the analysis as a conditional distribution. Score-based data assimilation uses a learned score prior and conditions the generation process on observations during inference \cite{rozet2023score}. Flow matching has more recently been applied to low-latency weather data assimilation \cite{cheng2026flowda}. The present experiments do not assimilate observations, but the same residual model can later be conditioned on masks, innovations, and auxiliary variables, with the decoded codec field acting as the background state.
+
+\subsection{Ocean-state and sound-speed reconstruction}
+
+Generative models have recently been applied to the reconstruction of three-dimensional and temporally evolving ocean fields from sparse or partial observations. Generative Lagrangian data assimilation reconstructs ocean dynamics under extreme observational sparsity \cite{asefi2025generative}, and subsequent work considers high-resolution probabilistic estimation of regional three-dimensional dynamics from sparse surface information \cite{asefi2026high}. Score-based methods have also been used to infer subsurface ocean states from surface observations \cite{souza2025surface}.
+
+For underwater acoustics, compact sound-speed representations have previously been studied through empirical orthogonal functions and learned dictionaries. Bianco and Gerstoft showed that dictionary learning can efficiently represent structured sound-speed-profile variability \cite{bianco2017dictionary}. Our problem is complementary: rather than directly constructing a low-dimensional SSP representation, we restore vertical extrema and prominent features removed by a neural codec.
+
+\subsection{Positioning of the present work}
+
+The closest methodological literature combines codec residual augmentation \cite{ghouse2023residual}, deterministic--stochastic residual decomposition \cite{liu2024residual}, semantic residual coding \cite{ke2025ultra}, flow-based latent refinement \cite{huang2026flowcodec}, and dedicated residual modeling for scientific fields \cite{zhu2026residual}. Unlike these approaches, our evaluation centers on physically meaningful extrema in compressed ocean fields. We compare several source distributions for residual flow matching and demonstrate that the method optimizing RMSE is not necessarily the method optimizing weighted, prominent, or prominence-weighted extrema F1.
+
+% ============================================================
+\section{Residual Enhancement Framework}
+
+\subsection{Compressed background and fixed-rate correction}
+
+Let $\x\in\mathbb{R}^{C\times H\times W}$ denote an ocean-field tensor. The frozen codec produces $\z$ and $\xb$. At a fixed codec operating point, the transmitted rate is determined exclusively by $\z$:
+\begin{equation}
+    R_{\mathrm{total}}=R_{\mathrm{codec}}(\z).
+\end{equation}
+The residual model acts only at decoding time:
+\begin{equation}
+    \rh=\mathcal{G}_{\theta}(\xb,\z,\omega),
+    \qquad
+    \xh=\xb+\rh,
+\end{equation}
+where $\omega$ is optional stochastic input. Consequently, the residual enhancement does not modify the reported compression ratio.
+
+\subsection{Deterministic U-Net correction}
+
+A deterministic U-Net estimates the conditional mean residual. The encoder--decoder architecture follows the multiscale skip-connected design \cite{ronneberger2015u}:
+\begin{equation}
+\boxed{
+    \emean
+    =
+    \Ut(\xb,\z)
+    \approx
+    \mathbb{E}[\rone\mid\xb,\z].
+}
+\label{eq:det_mean}
+\end{equation}
+The corrected field is
+\begin{equation}
+    \xh_{\mathrm{U\mbox{-}Net}}
+    =
+    \xb+\emean.
+\end{equation}
+The model is trained with a residual regression objective,
+\begin{equation}
+    \Lcal_{\mathrm{det}}
+    =
+    \mathbb{E}
+    \left[
+    \|\rone-\Ut(\xb,\z)\|_2^2
+    \right].
+\end{equation}
+This objective favors the conditional mean and is therefore naturally aligned with RMSE reduction.
+
+\subsection{Residual flow matching}
+
+Flow matching learns continuous transport through a conditional vector-field regression objective \cite{lipman2022flow}. The flow model transports an initial residual sample $\rzero$ from a reference distribution $q_0$ toward the empirical residual $\rone$. The linear interpolation used here is related to rectified-flow transport \cite{liu2022flow} and the stochastic-interpolant framework \cite{albergo2022building}. For $t\in[0,1]$, we use the interpolant
+\begin{equation}
+\boxed{
+    \rtau=(1-t)\rzero+t\rone.
+}
+\label{eq:linear_interpolant}
+\end{equation}
+The conditional expectation parameterization is trained as
+\begin{equation}
+\boxed{
+    \Psit(\rtau,t,\xb,\z)
+    \approx
+    \mathbb{E}[\rone\mid\rtau,\xb,\z],
+}
+\end{equation}
+with objective
+\begin{equation}
+\boxed{
+    \Lcal_{\mathrm{FM}}
+    =
+    \mathbb{E}_{\x,\rzero,t}
+    \left[
+    \|\rone-\Psit(\rtau,t,\xb,\z)\|_2^2
+    \right].
+}
+\label{eq:fm_loss}
+\end{equation}
+For the linear path, the probability-flow ordinary differential equation is
+\begin{equation}
+    \frac{d\rtau}{dt}
+    =
+    \frac{\Psit(\rtau,t,\xb,\z)-\rtau}{1-t}.
+\end{equation}
+Integration is stopped at $t=1-\epsilon$, and the final residual estimate is added to the compressed background. Repeating the inference with independent initial samples produces an ensemble
+\begin{equation}
+    \xh^{(k)}=\xb+\rh^{(k)}.
+\end{equation}
+
+\subsection{Mean-plus-flow cascade}
+
+The hybrid architecture separates predictable compression bias from unresolved stochastic structure, following the broader logic of residual generative models that decouple systematic correction from stochastic unresolved information \cite{ghouse2023residual,liu2024residual,ke2025ultra}. The deterministic U-Net first estimates $\emean$, after which the remaining residual is
+\begin{equation}
+\boxed{
+    \mathbf{e}_1
+    =
+    \rone-\emean
+    =
+    \x-(\xb+\emean).
+}
+\end{equation}
+A flow model is then trained on $\mathbf{e}_1$. The final reconstruction is
+\begin{equation}
+\boxed{
+    \xh^{(k)}
+    =
+    \xb+\emean+\eh^{(k)}.
+}
+\label{eq:cascade}
+\end{equation}
+This decomposition is expected to preserve the U-Net's low RMSE while allowing the stochastic component to restore fine-scale structures.
+
+\subsection{Reference distributions}
+
+We compare six initial distributions $q_0$:
+\begin{enumerate}[leftmargin=1.5em]
+    \item standard Gaussian noise;
+    \item scaled Gaussian noise matched to a residual scale estimate;
+    \item spatial high-pass noise;
+    \item Fourier high-pass noise;
+    \item Laplace noise;
+    \item Rademacher noise.
+\end{enumerate}
+Gaussian references provide smooth isotropic perturbations, Laplace noise introduces heavier tails, and high-pass references concentrate energy at small spatial scales. Rademacher noise provides a bounded discrete reference and serves as a contrasting ablation.
+
+\subsection{Optional observation conditioning}
+
+When external observations are available, the conditioning input can be extended to
+\begin{equation}
+    \y =
+    \left[
+    \M,\;
+    \M\odot \y_{\mathrm{obs}},\;
+    \M\odot(\y_{\mathrm{obs}}-\Hobs(\xb)),\;
+    \y_{\mathrm{aux}}
+    \right],
+\end{equation}
+and all deterministic and stochastic models can be written as functions of $(\xb,\z,\y)$. This does not change the residual decomposition. It changes only the information available to estimate $\rone$. Because the experiments reported here use no external observations, claims about observation-conditioned skill are left for future evaluation.
+
+% ============================================================
+\section{Experimental Protocol}
+
+\subsection{Base codec and test setting}
+
+MLIC++ is used as the frozen base codec. The same codec checkpoint, normalization, and held-out test split are used for all residual methods. The full-metrics evaluation contains $1{,}340$ test samples. Residual correction is applied entirely at decoding time; no additional residual code is transmitted.
+
+The pure flow models are evaluated with their selected residual weight $\alpha=1.0$. The U-Net--flow cascades use $\alpha=0.75$. Stochastic methods use an eight-member ensemble, and the ensemble mean is used for the principal reconstruction scores. The deterministic U-Net result is included as an external reference from the preceding evaluation. Because its extrema evaluator used slightly different ground-truth counts, comparisons involving that row are indicative rather than strictly paired.
+
+\subsection{Compared methods}
+
+The study includes:
+\begin{enumerate}[leftmargin=1.5em]
+    \item the frozen MLIC++ reconstruction;
+    \item deterministic U-Net residual correction;
+    \item pure residual flow matching with each of the six reference distributions;
+    \item U-Net plus residual flow matching with each reference distribution.
+\end{enumerate}
+The comparison isolates the effect of both architecture and reference distribution at the same transmitted codec rate.
+
+\subsection{Evaluation metrics}
+
+Scientific compression should be evaluated using both global reconstruction errors and task-relevant structural diagnostics \cite{di2025survey,gomes2025lossy,mirowski2024neural,li2025machine}. The analysis therefore focuses on four complementary metrics.
+
+\paragraph{Physical RMSE.}
+The physical RMSE measures pointwise reconstruction error after inverse normalization:
+\begin{equation}
+    \mathrm{RMSE}_{\mathrm{phys}}
+    =
+    \sqrt{
+    \frac{1}{N}
+    \sum_{i=1}^{N}
+    \|\xh_i-\x_i\|_2^2
+    }.
+\end{equation}
+Lower values indicate more accurate mean reconstruction.
+
+\paragraph{Weighted combined F1.}
+The weighted combined F1, stored as
+\nolinkurl{f1_combined_mean_weighted_h}, evaluates the joint recovery of minima and maxima while assigning greater influence to the profiles or extrema emphasized by the evaluator's weighting scheme. It is the primary global structure-sensitive F1 score.
+
+\paragraph{F1 on prominent extrema.}
+The prominent-extrema F1, stored as
+\nolinkurl{f1_prom_both_mean}, first restricts the comparison to extrema satisfying the prominence criterion and then evaluates the joint recovery of prominent minima and maxima. It measures whether the reconstruction preserves the main vertical structures rather than every small oscillation.
+
+\paragraph{Prominence-weighted F1.}
+The prominence-weighted F1, stored as
+\nolinkurl{prom_weighted_f1_combined}, weights extrema according to their prominence during precision--recall aggregation. It therefore gives more importance to the most pronounced physical structures. This metric is distinct from the F1 computed after prominence filtering.
+
+The three F1 scores are complementary. Weighted combined F1 assesses overall extrema recovery, prominent-extrema F1 evaluates a prominence-filtered subset, and prominence-weighted F1 continuously emphasizes the most prominent extrema.
+
+% ============================================================
+\section{Results}
+
+\subsection{Overall comparison}
+
+Table~\ref{tab:main_results} reports the four principal metrics. The results reveal two distinct regimes. U-Net--flow models dominate RMSE, whereas pure flow models generally dominate the structure-sensitive F1 scores.
+
+\begin{table}[t]
+\centering
+\caption{
+Main full-metrics comparison on the $1{,}340$-sample test split.
+Higher F1 scores are better and lower RMSE is better.
+A dash indicates that the exact metric was not available in the corresponding export.
+The deterministic U-Net row, marked by $\dagger$, comes from a preceding evaluator version and is included as an indicative reference.
+}
+\label{tab:main_results}
+\resizebox{\linewidth}{!}{
+\begin{tabular}{llccccc}
+\toprule
+\textbf{Architecture} &
+\textbf{Reference distribution} &
+$\boldsymbol{\alpha}$ &
+\textbf{RMSE} $\downarrow$ &
+\textbf{Weighted combined F1} $\uparrow$ &
+\textbf{Prominent-extrema F1} $\uparrow$ &
+\textbf{Prominence-weighted F1} $\uparrow$ \\
+\midrule
+MLIC++ & -- & 0.00 & 0.3946 & 0.5812 & 0.6910 & 0.8236 \\
+U-Net$^{\dagger}$ & -- & 0.75 & 0.3712 & 0.6248 & -- & -- \\
+\midrule
+Flow & Gaussian & 1.00 & 0.3897 & 0.6384 & 0.7539 & 0.8576 \\
+Flow & Scaled Gaussian & 1.00 & 0.3938 & 0.6362 & 0.7550 & 0.8592 \\
+Flow & Spatial high-pass & 1.00 & 0.3946 & 0.6379 & \textbf{0.7590} & \textbf{0.8611} \\
+Flow & Fourier high-pass & 1.00 & 0.4032 & \textbf{0.6405} & 0.7547 & 0.8598 \\
+Flow & Laplace & 1.00 & 0.3961 & 0.6383 & 0.7573 & 0.8602 \\
+Flow & Rademacher & 1.00 & 0.4574 & 0.6167 & 0.7141 & 0.8380 \\
+\midrule
+U-Net + Flow & Gaussian & 0.75 & 0.3708 & 0.6265 & 0.7500 & 0.8569 \\
+U-Net + Flow & Scaled Gaussian & 0.75 & \textbf{0.3678} & 0.6313 & 0.7556 & -- \\
+U-Net + Flow & Spatial high-pass & 0.75 & 0.3723 & 0.6382 & 0.7567 & -- \\
+U-Net + Flow & Fourier high-pass & 0.75 & 0.3746 & 0.6331 & 0.7526 & -- \\
+U-Net + Flow & Laplace & 0.75 & 0.3711 & 0.6273 & 0.7503 & -- \\
+U-Net + Flow & Rademacher & 0.75 & 0.3846 & 0.6284 & 0.7544 & -- \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Pointwise reconstruction accuracy}
+
+The lowest RMSE is obtained by the scaled-Gaussian U-Net--flow cascade, which reaches $0.3678$. Relative to the MLIC++ baseline value of $0.3946$, this corresponds to an absolute reduction of $0.0268$ and a relative reduction of approximately $6.8\%$. The deterministic U-Net reaches $0.3712$, so the scaled-Gaussian cascade provides an additional, although modest, improvement of approximately $0.9\%$.
+
+The other U-Net--flow variants also remain close to the deterministic U-Net. Gaussian and Laplace cascades reach RMSE values of $0.3708$ and $0.3711$, respectively. This consistency indicates that the deterministic component captures most of the predictable compression error. The flow component modifies the fine-scale residual without substantially degrading the mean field when its contribution is applied after the U-Net.
+
+Pure flow models show a different behavior. Gaussian flow reduces RMSE slightly relative to MLIC++, reaching $0.3897$, whereas scaled-Gaussian and spatial high-pass flows remain approximately at the baseline level. Fourier high-pass and Laplace flow sacrifice pointwise accuracy to improve structural metrics. Rademacher flow performs poorly, increasing RMSE to $0.4574$.
+
+\subsection{Weighted combined F1}
+
+The best weighted combined F1 is obtained by pure Fourier high-pass flow, with a score of $0.6405$. The MLIC++ baseline reaches $0.5812$, giving an absolute gain of $0.0593$ and a relative improvement of $10.2\%$. Gaussian, Laplace, and spatial high-pass flows also perform strongly, with scores between $0.6379$ and $0.6384$.
+
+The best U-Net--flow result is obtained with spatial high-pass initialization, which reaches $0.6382$. This value is close to the best pure flow result while retaining an RMSE of $0.3723$. It therefore provides a better joint RMSE--F1 operating point than Fourier high-pass flow, whose RMSE increases to $0.4032$.
+
+The deterministic U-Net improves weighted combined F1 over MLIC++, from $0.5812$ to $0.6248$, but it remains below the best flow-based configurations. This suggests that deterministic residual regression recovers systematic errors but does not fully reproduce the variability required for optimal extrema detection.
+
+\subsection{F1 on prominent extrema}
+
+Spatial high-pass flow achieves the highest prominent-extrema F1, increasing the score from $0.6910$ for MLIC++ to $0.7590$. The absolute gain is $0.0680$, corresponding to a relative improvement of $9.8\%$. Laplace flow is a close second at $0.7573$, followed by scaled-Gaussian flow at $0.7550$.
+
+The U-Net--flow cascades also perform well on prominent extrema. Their scores range from $0.7500$ to $0.7567$, substantially above the MLIC++ baseline. In particular, the spatial high-pass cascade reaches $0.7567$ while maintaining near-U-Net RMSE. The small difference between pure high-pass flow and the cascade indicates that high-frequency initialization is beneficial for prominent structures in both architectures.
+
+These results support the hypothesis that high-pass references better align the initial flow energy with the small-scale structures removed by compression. The improvement is not merely due to generating more extrema, because the prominence criterion limits the evaluation to structurally important features.
+
+\subsection{Prominence-weighted F1}
+
+The prominence-weighted F1 provides a stricter assessment of the most pronounced extrema. Spatial high-pass flow again ranks first, improving the score from $0.8236$ to $0.8611$. This represents an absolute gain of $0.0375$ and a relative improvement of $4.6\%$. Laplace and Fourier high-pass flow are very close, with scores of $0.8602$ and $0.8598$, respectively.
+
+The smaller relative gain compared with the prominent-extrema F1 is expected because MLIC++ already reconstructs the strongest structures more accurately than weak extrema. Nevertheless, the improvement remains systematic across all pure flow distributions except Rademacher, showing that residual flow matching enhances not only the number of detected extrema but also their prominence-weighted precision--recall balance.
+
+The newly completed Gaussian cascade evaluation reaches a prominence-weighted combined F1 of $0.8569$. This is only $0.0042$ below the best pure spatial high-pass flow score of $0.8611$, while its RMSE is substantially lower ($0.3708$ instead of approximately $0.3946$). The result strengthens the interpretation that U-Net--flow cascades can retain most of the prominence-sensitive benefit of a pure flow while preserving deterministic reconstruction accuracy. Exact \nolinkurl{prom_weighted_f1_combined} scores are still required for the other cascade distributions before selecting the best hybrid for this metric.
+
+\subsection{Architecture and distribution trade-offs}
+
+No single model dominates all four metrics. The results instead define a Pareto frontier:
+\begin{itemize}[leftmargin=1.5em]
+    \item \textbf{Best RMSE:} U-Net plus scaled-Gaussian flow ($0.3678$).
+    \item \textbf{Best weighted combined F1:} Fourier high-pass flow ($0.6405$).
+    \item \textbf{Best prominent-extrema F1:} spatial high-pass flow ($0.7590$).
+    \item \textbf{Best prominence-weighted F1:} spatial high-pass flow ($0.8611$).
+    \item \textbf{Best fully characterized compromise:} U-Net plus Gaussian flow, with RMSE $0.3708$, weighted combined F1 $0.6265$, prominent-extrema F1 $0.7500$, and prominence-weighted F1 $0.8569$.
+    \item \textbf{Best partial-metric compromise:} U-Net plus spatial high-pass flow, with RMSE $0.3723$, weighted combined F1 $0.6382$, and prominent-extrema F1 $0.7567$; its exact prominence-weighted score remains to be computed.
+\end{itemize}
+
+The comparison between pure and cascaded flows clarifies the role of each component. The U-Net reduces systematic amplitude and background errors, thereby improving RMSE. Pure flow retains greater stochastic freedom and more effectively reconstructs extrema. High-pass references are especially effective for structure-sensitive criteria, while scaled Gaussian is better suited to pointwise reconstruction. Laplace noise provides consistently strong extrema scores, suggesting that heavy-tailed references are also well matched to sparse residual anomalies. The poor Rademacher result indicates that a bounded binary reference is not expressive enough for the residual distribution in its current formulation.
+
+% ============================================================
+\section{Uncertainty and Qualitative Evaluation}
+
+Each stochastic method generates an eight-member ensemble. The ensemble provides a first estimate of residual uncertainty, but the current coverage diagnostics indicate under-dispersion: empirical one- and two-standard-deviation coverage remain below nominal Gaussian levels. Pure flow models generally exhibit larger spread and better coverage than U-Net--flow cascades. The deterministic component therefore improves the ensemble mean but reduces diversity.
+
+Future calibration should investigate variance rescaling, spread regularization, proper scoring rules, or explicit likelihood-free calibration on the validation set. Ensemble quality should also be evaluated conditionally around prominent extrema, where uncertainty is likely to be largest and most scientifically relevant.
+
+A qualitative comparison should include the target field, MLIC++ reconstruction, true residual, predicted residual, corrected field, and absolute error before and after correction. For stochastic methods, the ensemble mean and standard deviation should be displayed alongside the locations of prominent minima and maxima. Such figures are needed to determine whether F1 improvements correspond to physically well-located structures or to visually plausible but displaced extrema.
+
+% ============================================================
+\section{Discussion}
+
+The experiments demonstrate that residual enhancement can improve a frozen learned codec without modifying its transmitted rate. However, the meaning of ``improvement'' depends strongly on the evaluation criterion. RMSE and extrema-sensitive F1 scores emphasize different aspects of the reconstruction and select different optimal models. This behavior is consistent with the rate--distortion--perception trade-off \cite{blau2019rethinking}: deterministic regression favors pointwise distortion, whereas generative models can allocate probability to fine-scale or multimodal structures that improve feature-sensitive diagnostics \cite{mentzer2020high,yang2023lossy,ghouse2023residual}.
+
+The RMSE results are consistent with the statistical behavior of deterministic regression. A U-Net trained with a squared-error residual objective approximates the conditional mean and efficiently corrects systematic compression bias. The scaled-Gaussian cascade improves this result slightly, suggesting that a stochastic residual component can recover additional information without destabilizing the mean reconstruction. Nevertheless, the gain over the deterministic U-Net is modest, and its practical relevance should be assessed against the added inference cost.
+
+Pure flow models provide a clearer advantage for extrema reconstruction. Their success supports the hypothesis that compression errors have a simpler and more task-specific structure than the complete ocean field, as also suggested by residual diffusion, semantic residual coding, latent flow refinement, and recent scientific residual-compression studies \cite{ghouse2023residual,liu2024residual,ke2025ultra,huang2026flowcodec,zhu2026residual}. Fourier high-pass initialization gives the best weighted combined F1, while spatial high-pass initialization gives the best prominence-based scores. These results suggest that the geometry of the reference distribution influences the structures recovered by the transport. Flow-matching and stochastic-interpolant theory allow considerable flexibility in the source distribution and interpolation path \cite{lipman2022flow,liu2022flow,albergo2022building}. Initializing energy at high spatial frequencies may facilitate the reconstruction of sharp residual features that are poorly represented by the codec background. Laplace noise also performs consistently well, which is compatible with a residual distribution containing sparse, heavy-tailed anomalies.
+
+The Gaussian U-Net--flow cascade is the strongest configuration for which all four headline metrics are currently available: its prominence-weighted F1 of $0.8569$ is close to the best pure-flow value while its RMSE remains close to the deterministic U-Net. The spatial high-pass U-Net--flow cascade currently provides the strongest partial-metric multi-objective compromise. It approaches the best pure-flow F1 scores while preserving an RMSE close to the deterministic U-Net. This configuration is therefore the most appropriate default when both pointwise fidelity and extrema preservation matter. By contrast, scaled-Gaussian U-Net--flow should be selected when RMSE is the primary objective, and pure high-pass or Fourier high-pass flow should be selected when structure-sensitive F1 is prioritized.
+
+Several limitations remain. First, the deterministic U-Net was evaluated with a preceding version of the extrema evaluator; it should be rerun with the final full-metrics implementation before precise significance claims are made. Second, the exact prominence-weighted combined F1 is still missing for all U-Net--flow models except the Gaussian cascade. Third, the stochastic ensembles are under-dispersed, so their spread should not yet be interpreted as calibrated posterior uncertainty. Fourth, statistical uncertainty on the differences between closely ranked flow distributions has not been quantified. Paired bootstrap confidence intervals across the $1{,}340$ samples would determine whether differences such as $0.8611$ versus $0.8602$ are meaningful.
+
+Finally, the present experiment is a no-observation residual prior. The data-assimilation interpretation remains promising, but observation-conditioned claims require dedicated experiments with controlled masks, noise levels, and innovation inputs. Neural variational assimilation, score-based assimilation, and recent flow-based weather assimilation provide natural methodological starting points \cite{fablet2021learning,rozet2023score,cheng2026flowda}. Recent probabilistic ocean-reconstruction studies further suggest that sparse surface or Lagrangian observations could constrain otherwise ambiguous residual structures \cite{asefi2025generative,asefi2026high,souza2025surface}. This distinction is important: the current results validate decoder-side residual enhancement, while observation-constrained reconstruction is a subsequent research direction.
+
+% ============================================================
+\section{Conclusion}
+
+We presented a codec-agnostic residual framework for improving compressed ocean-field reconstructions at fixed transmitted rate. The approach connects residual generative compression \cite{ghouse2023residual,ke2025ultra,huang2026flowcodec}, scientific-field compression \cite{mirowski2024neural,zhu2026residual}, and probabilistic data assimilation \cite{rozet2023score,cheng2026flowda}. A frozen neural codec supplies a compressed background, and deterministic or flow-based models estimate the residual information removed by compression. The experiments compare pure residual flow matching and U-Net--flow cascades across six reference distributions.
+
+The results reveal a robust trade-off between pointwise and structural reconstruction. The best RMSE is obtained by U-Net plus scaled-Gaussian flow, which reduces RMSE from $0.3946$ to $0.3678$, a $6.8\%$ improvement over MLIC++. Pure flows achieve the strongest extrema scores. Fourier high-pass flow improves weighted combined F1 from $0.5812$ to $0.6405$ ($+10.2\%$), while spatial high-pass flow improves prominent-extrema F1 from $0.6910$ to $0.7590$ ($+9.8\%$) and prominence-weighted F1 from $0.8236$ to $0.8611$ ($+4.6\%$).
+
+These results show that residual flow matching is not simply an RMSE correction mechanism. Its primary benefit is the recovery of structurally significant extrema that are smoothed by the base codec. The deterministic U-Net remains preferable for minimizing average pointwise error, whereas high-pass flow references are preferable for preserving prominent features. The spatial high-pass U-Net--flow cascade provides the most balanced current operating point, combining near-U-Net RMSE with F1 scores close to the best pure flows.
+
+Future work should complete the prominence-weighted evaluation of the remaining cascaded models, rerun every baseline with the same evaluator, quantify paired statistical uncertainty, calibrate ensemble spread, and introduce observation conditioning to transform the residual prior into an observation-constrained analysis increment.
+
+% ============================================================
+\bibliographystyle{plain}
+\bibliography{biblio}
+
+\end{document}

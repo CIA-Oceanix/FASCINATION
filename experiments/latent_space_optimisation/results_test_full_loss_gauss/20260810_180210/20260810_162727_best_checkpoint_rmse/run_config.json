@@ -1,0 +1,68 @@
+{
+  "crop_idx": {
+    "start": 20,
+    "stop": -20,
+    "step": null
+  },
+  "time_sample": 1,
+  "norm_stats": "test",
+  "torch_seed": 42,
+  "checkpoint_paths": [
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/baseline/20260619_180735/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260803_004630/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260803_004638/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260803_230822/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260803_231624/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260803_232645/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260805_231705/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260805_231719/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260805_233624/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260806_224834/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/complex_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260806_225950/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/cr_1000/fixed_weight_loss_192_320_1.0_CR_1000.0_enatl_natl__mean_std_along_depth/20260810_162727/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/cr_1000/fixed_weight_loss_64_96_1.0_CR_1000.0_enatl_natl__mean_std_along_depth/20260810_152343/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/fixed_weight_loss_192_320_1.0_CR_10000.0_enatl_natl__mean_std/20260803_175321/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/fixed_weight_loss_192_320_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260803_173849/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/fixed_weight_loss_32_48_1.0_CR_10000.0_enatl_natl__mean_std/20260725_155134/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/fixed_weight_loss_32_48_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260729_195351/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/fixed_weight_loss_32_48_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260729_210619/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std/20260723_220336/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260726_101454/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/simple_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260803_013515/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/simple_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260804_235815/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/simple_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260804_235823/checkpoints/best_checkpoint_rmse.pth.tar",
+    "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/simple_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std_along_depth/20260805_002413/checkpoints/best_checkpoint_rmse.pth.tar"
+  ],
+  "checkpoint_path": "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/cr_1000/fixed_weight_loss_192_320_1.0_CR_1000.0_enatl_natl__mean_std_along_depth/20260810_162727/checkpoints/best_checkpoint_rmse.pth.tar",
+  "checkpoint_tag": "20260810_162727_best_checkpoint_rmse",
+  "dm_path": "/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_157_196_256_norm_per_split_filtered_z_uniform_alternate_days_7_60_10.pkl",
+  "n_steps": 2000,
+  "cadence_results": {},
+  "selected_indices_by_cadence": {},
+  "per_cadence_details": {},
+  "n_obs_per_day_values": [
+    100
+  ],
+  "radius_list": [
+    10
+  ],
+  "y_hat_inits": [
+    "nn"
+  ],
+  "loss_on_values": [
+    "full"
+  ],
+  "lam_values": [
+    0.0
+  ],
+  "max_available_k": 365,
+  "nn_k_values": [
+    80
+  ],
+  "n_days": 1,
+  "lr": 0.01,
+  "infer_batch_size": 32,
+  "device": "cuda",
+  "load_device": "cpu",
+  "model_type": "MLIC"
+}

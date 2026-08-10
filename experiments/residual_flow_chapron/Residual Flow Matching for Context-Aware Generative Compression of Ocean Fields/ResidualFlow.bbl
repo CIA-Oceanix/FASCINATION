@@ -1,0 +1,168 @@
+\begin{thebibliography}{10}
+
+\bibitem{albergo2022building}
+Michael~S Albergo and Eric Vanden-Eijnden.
+\newblock Building normalizing flows with stochastic interpolants.
+\newblock {\em arXiv preprint arXiv:2209.15571}, 2022.
+
+\bibitem{asefi2025generative}
+Niloofar Asefi, Leonard Lupin-Jimenez, Tianning Wu, Ruoying He, and Ashesh Chattopadhyay.
+\newblock Generative lagrangian data assimilation for ocean dynamics under extreme sparsity.
+\newblock {\em Machine Learning: Earth}, 1(1):015009, 2025.
+
+\bibitem{asefi2026high}
+Niloofar Asefi, Tianning Wu, Ruoying He, and Ashesh Chattopadhyay.
+\newblock High-resolution probabilistic estimation of three-dimensional regional ocean dynamics from sparse surface observations.
+\newblock {\em arXiv preprint arXiv:2604.02850}, 2026.
+
+\bibitem{balle2018variational}
+Johannes Ball{\'e}, David Minnen, Saurabh Singh, Sung~Jin Hwang, and Nick Johnston.
+\newblock Variational image compression with a scale hyperprior.
+\newblock {\em arXiv preprint arXiv:1802.01436}, 2018.
+
+\bibitem{bianco2017dictionary}
+Michael Bianco and Peter Gerstoft.
+\newblock Dictionary learning of sound speed profiles.
+\newblock {\em The Journal of the Acoustical Society of America}, 141(3):1749--1758, 2017.
+
+\bibitem{blau2019rethinking}
+Yochai Blau and Tomer Michaeli.
+\newblock Rethinking lossy compression: The rate-distortion-perception tradeoff.
+\newblock In {\em International Conference on Machine Learning}, pages 675--685. PMLR, 2019.
+
+\bibitem{cheng2026flowda}
+Ran Cheng and Lailai Zhu.
+\newblock Flowda: Accurate, low-latency weather data assimilation via flow matching.
+\newblock {\em arXiv preprint arXiv:2602.06800}, 2026.
+
+\bibitem{di2025survey}
+Sheng Di, Jinyang Liu, Kai Zhao, Xin Liang, Robert Underwood, Zhaorui Zhang, Milan Shah, Yafan Huang, Jiajun Huang, Xiaodong Yu, et~al.
+\newblock A survey on error-bounded lossy compression for scientific datasets.
+\newblock {\em ACM computing surveys}, 57(11):1--38, 2025.
+
+\bibitem{fablet2021learning}
+Ronan Fablet, Bertrand Chapron, Lucas Drumetz, Etienne M{\'e}min, Olivier Pannekoucke, and Fran{\c{c}}ois Rousseau.
+\newblock Learning variational data assimilation models and solvers.
+\newblock {\em Journal of Advances in Modeling Earth Systems}, 13(10):e2021MS002572, 2021.
+
+\bibitem{ghouse2023residual}
+Noor~Fathima Ghouse, Jens Petersen, Auke Wiggers, Tianlin Xu, and Guillaume Sautiere.
+\newblock A residual diffusion model for high perceptual quality codec augmentation.
+\newblock {\em arXiv preprint arXiv:2301.05489}, 2023.
+
+\bibitem{gomes2025lossy}
+Carlos Gomes, Isabelle Wittmann, Damien Robert, Johannes Jakubik, Tim Reichelt, Stefano Maurogiovanni, Rikard Vinge, Jonas Hurst, Erik Scheurer, Rocco Sedona, et~al.
+\newblock Lossy neural compression for geospatial analytics: A review.
+\newblock {\em IEEE Geoscience and Remote Sensing Magazine}, 13(3):97--135, 2025.
+
+\bibitem{han2024cra5}
+Tao Han, Zhenghao Chen, Song Guo, Wanghan Xu, and Lei Bai.
+\newblock Cra5: Extreme compression of era5 for portable global climate and weather research via an efficient variational transformer.
+\newblock {\em arXiv preprint arXiv:2405.03376}, 2024.
+
+\bibitem{ho2020denoising}
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+\newblock Denoising diffusion probabilistic models.
+\newblock {\em Advances in neural information processing systems}, 33:6840--6851, 2020.
+
+\bibitem{huang2026flowcodec}
+Yinhuan Huang, Hao Cao, Wenqi Guo, Zhijin Qin, et~al.
+\newblock Flowcodec: One-step flow prior for generative image compression.
+\newblock {\em arXiv preprint arXiv:2606.21030}, 2026.
+
+\bibitem{jiang2025mlicpp}
+Wei Jiang, Jiayu Yang, Yongqi Zhai, Feng Gao, and Ronggang Wang.
+\newblock Mlic++: Linear complexity multi-reference entropy modeling for learned image compression.
+\newblock {\em ACM Transactions on Multimedia Computing, Communications and Applications}, 21(5):1--25, 2025.
+
+\bibitem{jiang2023mlic}
+Wei Jiang, Jiayu Yang, Yongqi Zhai, Peirong Ning, Feng Gao, and Ronggang Wang.
+\newblock Mlic: Multi-reference entropy model for learned image compression.
+\newblock In {\em Proceedings of the 31st ACM International Conference on Multimedia}, pages 7618--7627, 2023.
+
+\bibitem{ke2025ultra}
+Anle Ke, Xu~Zhang, Tong Chen, Ming Lu, Chao Zhou, Jiawen Gu, and Zhan Ma.
+\newblock Ultra lowrate image compression with semantic residual coding and compression-aware diffusion.
+\newblock {\em arXiv preprint arXiv:2505.08281}, 2025.
+
+\bibitem{li2025machine}
+Xiao Li, Qian Gong, Jaemoon Lee, Scott Klasky, Anand Rangarajan, and Sanjay Ranka.
+\newblock Machine learning techniques for data reduction of climate applications.
+\newblock In {\em Pacific-Asia Conference on Knowledge Discovery and Data Mining}, pages 437--448. Springer, 2025.
+
+\bibitem{li2024diffusion}
+Zhiyuan Li, Yanhui Zhou, Hao Wei, Chenyang Ge, and Ajmal~Saeed Mian.
+\newblock Diffusion-based extreme image compression with compressed feature initialization.
+\newblock 2024.
+
+\bibitem{lipman2022flow}
+Yaron Lipman, Ricky~TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le.
+\newblock Flow matching for generative modeling.
+\newblock {\em arXiv preprint arXiv:2210.02747}, 2022.
+
+\bibitem{liu2024residual}
+Jiawei Liu, Qiang Wang, Huijie Fan, Yinong Wang, Yandong Tang, and Liangqiong Qu.
+\newblock Residual denoising diffusion models.
+\newblock In {\em Proceedings of the IEEE/CVF conference on computer vision and pattern recognition}, pages 2773--2783, 2024.
+
+\bibitem{liu2022flow}
+Xingchao Liu, Chengyue Gong, and Qiang Liu.
+\newblock Flow straight and fast: Learning to generate and transfer data with rectified flow.
+\newblock {\em arXiv preprint arXiv:2209.03003}, 2022.
+
+\bibitem{mentzer2020high}
+Fabian Mentzer, George~D Toderici, Michael Tschannen, and Eirikur Agustsson.
+\newblock High-fidelity generative image compression.
+\newblock {\em Advances in neural information processing systems}, 33:11913--11924, 2020.
+
+\bibitem{minnen2018joint}
+David Minnen, Johannes Ball{\'e}, and George~D Toderici.
+\newblock Joint autoregressive and hierarchical priors for learned image compression.
+\newblock {\em Advances in neural information processing systems}, 31, 2018.
+
+\bibitem{mirowski2024neural}
+Piotr Mirowski, David Warde-Farley, Mihaela Rosca, Matthew~Koichi Grimes, Yana Hasson, Hyunjik Kim, M{\'e}lanie Rey, Simon Osindero, Suman Ravuri, and Shakir Mohamed.
+\newblock Neural compression of atmospheric states.
+\newblock {\em arXiv preprint arXiv:2407.11666}, 2024.
+
+\bibitem{park2025diffo}
+Chanung Park, Joo~Chan Lee, and Jong~Hwan Ko.
+\newblock Diffo: Single-step diffusion for image compression at ultra-low bitrates.
+\newblock {\em arXiv e-prints}, pages arXiv--2506, 2025.
+
+\bibitem{ronneberger2015u}
+Olaf Ronneberger, Philipp Fischer, and Thomas Brox.
+\newblock U-net: Convolutional networks for biomedical image segmentation.
+\newblock In {\em International Conference on Medical image computing and computer-assisted intervention}, pages 234--241. Springer, 2015.
+
+\bibitem{rozet2023score}
+Fran{\c{c}}ois Rozet and Gilles Louppe.
+\newblock Score-based data assimilation.
+\newblock {\em Advances in Neural Information Processing Systems}, 36:40521--40541, 2023.
+
+\bibitem{song2020score}
+Yang Song, Jascha Sohl-Dickstein, Diederik~P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+\newblock Score-based generative modeling through stochastic differential equations.
+\newblock {\em arXiv preprint arXiv:2011.13456}, 2020.
+
+\bibitem{souza2025surface}
+Andre~N Souza, Simone Silvestri, Katherine Deck, Tobias Bischoff, Raffaele Ferrari, and Glenn~R Flierl.
+\newblock Surface to seafloor: A generative ai framework for decoding the ocean interior state.
+\newblock {\em arXiv preprint arXiv:2504.15308}, 2025.
+
+\bibitem{theis2022lossy}
+Lucas Theis, Tim Salimans, Matthew~D Hoffman, and Fabian Mentzer.
+\newblock Lossy compression with gaussian diffusion.
+\newblock {\em arXiv preprint arXiv:2206.08889}, 2022.
+
+\bibitem{yang2023lossy}
+Ruihan Yang and Stephan Mandt.
+\newblock Lossy image compression with conditional diffusion models.
+\newblock {\em Advances in Neural Information Processing Systems}, 36:64971--64995, 2023.
+
+\bibitem{zhu2026residual}
+Liangji Zhu, Sanjay Ranka, and Anand Rangarajan.
+\newblock Residual modeling for high-fidelity learned compression of scientific data.
+\newblock {\em arXiv preprint arXiv:2606.05389}, 2026.
+
+\end{thebibliography}

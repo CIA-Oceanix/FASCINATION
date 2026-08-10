@@ -1,0 +1,38 @@
+{
+  "crop_idx": {
+    "start": 20,
+    "stop": -20,
+    "step": null
+  },
+  "time_sample": 1,
+  "norm_stats": "test",
+  "torch_seed": 42,
+  "mlic_path": "/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mix/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std/20260723_220415/checkpoints/best_checkpoint_rmse.pth.tar",
+  "dm_path": "/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_157_196_256_norm_per_split_filtered_z_uniform_alternate_days_7_60_10.pkl",
+  "n_steps": 10000,
+  "cadence_results": {},
+  "selected_indices_by_cadence": {},
+  "per_cadence_details": {},
+  "n_obs_per_day_values": [
+    100
+  ],
+  "y_hat_inits": [
+    "nn"
+  ],
+  "loss_on_values": [
+    "full"
+  ],
+  "lam_values": [
+    0.5
+  ],
+  "max_available_k": 365,
+  "nn_k_values": [
+    50
+  ],
+  "n_days": 1,
+  "lr": 0.1,
+  "infer_batch_size": 32,
+  "device": "cuda",
+  "load_device": "cpu",
+  "model_type": "MLIC"
+}

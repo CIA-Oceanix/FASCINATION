@@ -806,7 +806,7 @@ class AEDatamodule(pl.LightningDataModule):
         self.val_shape = val_da.shape
         self.test_shape = test_da.shape
 
-        
+
 
         # Create torch datasets (keeps ordering time,z,lat,lon and returns .data per sample)
         if self.verbose:

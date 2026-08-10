@@ -30,6 +30,9 @@ import math
 import struct
 import subprocess
 import shutil
+import tempfile
+import time
+from skimage.metrics import structural_similarity as skimage_ssim
 
 running_path = "/Odyssey/private/o23gauvr/code/"
 os.chdir(running_path)
@@ -39,7 +42,11 @@ sys.path.insert(0, "/Odyssey/private/o23gauvr/code/FASCINATION")
 from MLIC.MLIC.models import MLICPlusPlus
 from MLIC.MLIC.utils.utils import Config
 from FASCINATION.src.utils import unorm_ssp_arr_3D, norm_ssp_arr_3D, get_cfg_from_ckpt_path, load_model, getsize
-from FASCINATION.src.compression_nsr_analysis import compute_nsr_along_depth, compute_nsr_spatial_map
+from FASCINATION.src.compression_nsr_analysis import (
+    compute_nsr_along_depth,
+    compute_nsr_spatial_map,
+    compute_nsr_spatial_resolution_stats_by_depth_time,
+)
 
 try:
     import psutil
@@ -59,6 +66,12 @@ def get_memory_usage():
         return process.memory_info().rss / 1024 / 1024  # Convert to MB
     return None
 
+def bit_size(x):
+    if isinstance(x, (list, tuple)):
+        return sum(len(item) for item in x) * 8
+    else:
+        return len(x) * 8
+
 def log_data_shapes(data_dict, label=""):
     """Log shapes and estimated sizes of arrays in a dictionary."""
     log_str = f"\n{'='*70}\n{label}\n{'='*70}\n"
@@ -75,6 +88,16 @@ def log_memory_checkpoint(checkpoint_name, verbose=True):
     if mem_mb is not None and verbose:
         print(f"  [{checkpoint_name:.<35}] Memory: {mem_mb:.2f} MB")
     return mem_mb
+
+
+def log_metric_timing(metric_name: str, start_time: float, timings_dict: Optional[Dict[str, float]] = None, verbose: bool = True) -> float:
+    """Log elapsed computation time for one metric and optionally store it."""
+    elapsed_s = time.perf_counter() - start_time
+    if timings_dict is not None:
+        timings_dict[metric_name] = float(elapsed_s)
+    if verbose:
+        print(f"  [Timing] {metric_name}: {elapsed_s:.2f}s")
+    return elapsed_s
 
 
 # ============================================================================
@@ -516,288 +539,288 @@ def get_best_worst_random(metric_arr, truth_arr, ae_arr, metric_name,best_is_min
     return {'best': extract(unravel(best_idx)), 'worst': extract(unravel(worst_idx))}
 
 
-# ============================================================================
-# METRIC COMPUTATION FUNCTIONS
-# ============================================================================
+# # ============================================================================
+# # METRIC COMPUTATION FUNCTIONS
+# # ============================================================================
 
-def compute_metrics_batched(
-    ssp_truth_da: xr.DataArray,
-    ssp_ae_da: xr.DataArray,
-    depth_array: np.ndarray,
-    data_dict_metrics: List[str],
-    pca: Optional[PCA] = None,
-    batch_size: int = 5,
-    verbose: bool = False,
-) -> Dict:
-    """
-    Compute metrics on large SSP data in batches to avoid OOM issues.
+# def compute_metrics_batched(
+#     ssp_truth_da: xr.DataArray,
+#     ssp_ae_da: xr.DataArray,
+#     depth_array: np.ndarray,
+#     data_dict_metrics: List[str],
+#     pca: Optional[PCA] = None,
+#     batch_size: int = 5,
+#     verbose: bool = False,
+# ) -> Dict:
+#     """
+#     Compute metrics on large SSP data in batches to avoid OOM issues.
     
-    Parameters
-    ----------
-    ssp_truth_da : xr.DataArray
-        True SSP data array with shape (time, z, lat, lon)
-    ssp_ae_da : xr.DataArray
-        Reconstructed SSP data array with same shape
-    depth_array : np.ndarray
-        Depth array in meters
-    data_dict_metrics : List[str]
-        List of metrics to compute
-    pca : Optional[PCA]
-        Pre-fitted PCA object
-    batch_size : int
-        Number of time steps to process per batch (default: 5)
-    verbose : bool
-        If True, print progress information
+#     Parameters
+#     ----------
+#     ssp_truth_da : xr.DataArray
+#         True SSP data array with shape (time, z, lat, lon)
+#     ssp_ae_da : xr.DataArray
+#         Reconstructed SSP data array with same shape
+#     depth_array : np.ndarray
+#         Depth array in meters
+#     data_dict_metrics : List[str]
+#         List of metrics to compute
+#     pca : Optional[PCA]
+#         Pre-fitted PCA object
+#     batch_size : int
+#         Number of time steps to process per batch (default: 5)
+#     verbose : bool
+#         If True, print progress information
         
-    Returns
-    -------
-    Dict
-        Dictionary containing computed metrics and their statistics
-    """
-    n_time = ssp_truth_da.shape[0]
-    metrics_dict = {}
-    data = {"selected": {}}
+#     Returns
+#     -------
+#     Dict
+#         Dictionary containing computed metrics and their statistics
+#     """
+#     n_time = ssp_truth_da.shape[0]
+#     metrics_dict = {}
+#     data = {"selected": {}}
     
-    if verbose:
-        print(f"\nComputing metrics for shape: {ssp_truth_da.shape} in batches of {batch_size}")
+#     if verbose:
+#         print(f"\nComputing metrics for shape: {ssp_truth_da.shape} in batches of {batch_size}")
     
-    # Accumulators for batch-wise statistics
-    accumulators = {
-        'rmse_sum': 0.0,
-        'rmse_count': 0,
-        'mae_sum': 0.0,
-        'mae_count': 0,
-        'mse_sum': 0.0,
-        'mse_count': 0,
-        'psnr_sum': 0.0,
-        'psnr_count': 0,
-        'ecs_arr': [],
-        'extremum_pos_arr': [],
-        'f1_score_arr': [],
-        'pearson_corr_arr': [],
-        'r2_res': 0.0,
-        'r2_tot': 0.0,
-        'dtw_arr': [],
-        'lsd_arr': [],
-        'peak_freq_error_arr': [],
-        'wasserstein_arr': [],
-        'ssim_arr': [],
-        'mssim_arr': [],
-        'pae_pca': None,
-    }
+#     # Accumulators for batch-wise statistics
+#     accumulators = {
+#         'rmse_sum': 0.0,
+#         'rmse_count': 0,
+#         'mae_sum': 0.0,
+#         'mae_count': 0,
+#         'mse_sum': 0.0,
+#         'mse_count': 0,
+#         'psnr_sum': 0.0,
+#         'psnr_count': 0,
+#         'ecs_arr': [],
+#         'extremum_pos_arr': [],
+#         'f1_score_arr': [],
+#         'pearson_corr_arr': [],
+#         'r2_res': 0.0,
+#         'r2_tot': 0.0,
+#         'dtw_arr': [],
+#         'lsd_arr': [],
+#         'peak_freq_error_arr': [],
+#         'wasserstein_arr': [],
+#         'ssim_arr': [],
+#         'mssim_arr': [],
+#         'pae_pca': None,
+#     }
     
-    # First pass: compute global statistics and per-profile metrics
-    for batch_idx in tqdm(range(0, n_time, batch_size), desc="Computing metrics", disable=not verbose):
-        end_idx = min(batch_idx + batch_size, n_time)
+#     # First pass: compute global statistics and per-profile metrics
+#     for batch_idx in tqdm(range(0, n_time, batch_size), desc="Computing metrics", disable=not verbose):
+#         end_idx = min(batch_idx + batch_size, n_time)
         
-        # Extract batch
-        ssp_truth_batch = ssp_truth_da.isel(time=slice(batch_idx, end_idx))
-        ssp_ae_batch = ssp_ae_da.isel(time=slice(batch_idx, end_idx))
+#         # Extract batch
+#         ssp_truth_batch = ssp_truth_da.isel(time=slice(batch_idx, end_idx))
+#         ssp_ae_batch = ssp_ae_da.isel(time=slice(batch_idx, end_idx))
         
-        ssp_truth_np = ssp_truth_batch.values.astype(np.float32)
-        ssp_ae_np = ssp_ae_batch.values.astype(np.float32)
+#         ssp_truth_np = ssp_truth_batch.values.astype(np.float32)
+#         ssp_ae_np = ssp_ae_batch.values.astype(np.float32)
         
-        batch_size_actual = ssp_truth_np.shape[0]
+#         batch_size_actual = ssp_truth_np.shape[0]
         
-        # === RMSE ===
-        if verbose:
-            print(f"  Batch {batch_idx//batch_size + 1}: Computing RMSE...")
-        batch_rmse = np.sqrt(((ssp_ae_np - ssp_truth_np) ** 2).mean())
-        batch_mse = ((ssp_ae_np - ssp_truth_np) ** 2).mean()
-        accumulators['rmse_sum'] += batch_rmse * batch_size_actual
-        accumulators['rmse_count'] += batch_size_actual
-        accumulators['mse_sum'] += batch_mse * batch_size_actual
-        accumulators['mse_count'] += batch_size_actual
+#         # === RMSE ===
+#         if verbose:
+#             print(f"  Batch {batch_idx//batch_size + 1}: Computing RMSE...")
+#         batch_rmse = np.sqrt(((ssp_ae_np - ssp_truth_np) ** 2).mean())
+#         batch_mse = ((ssp_ae_np - ssp_truth_np) ** 2).mean()
+#         accumulators['rmse_sum'] += batch_rmse * batch_size_actual
+#         accumulators['rmse_count'] += batch_size_actual
+#         accumulators['mse_sum'] += batch_mse * batch_size_actual
+#         accumulators['mse_count'] += batch_size_actual
         
-        # === MAE ===
-        batch_mae = np.abs(ssp_ae_np - ssp_truth_np).mean(axis=1, keepdims=False).mean()
-        accumulators['mae_sum'] += batch_mae * batch_size_actual
-        accumulators['mae_count'] += batch_size_actual
+#         # === MAE ===
+#         batch_mae = np.abs(ssp_ae_np - ssp_truth_np).mean(axis=1, keepdims=False).mean()
+#         accumulators['mae_sum'] += batch_mae * batch_size_actual
+#         accumulators['mae_count'] += batch_size_actual
         
-        # === PSNR ===
-        max_val_ssp = float(np.nanmax(ssp_truth_da.values))
-        batch_mse_per_loc = ((ssp_ae_np - ssp_truth_np) ** 2).mean(axis=1)
-        batch_psnr = 10 * np.log10((max_val_ssp ** 2) / (batch_mse_per_loc.mean() + 1e-10))
-        accumulators['psnr_sum'] += batch_psnr * batch_size_actual
-        accumulators['psnr_count'] += batch_size_actual
+#         # === PSNR ===
+#         max_val_ssp = float(np.nanmax(ssp_truth_da.values))
+#         batch_mse_per_loc = ((ssp_ae_np - ssp_truth_np) ** 2).mean(axis=1)
+#         batch_psnr = 10 * np.log10((max_val_ssp ** 2) / (batch_mse_per_loc.mean() + 1e-10))
+#         accumulators['psnr_sum'] += batch_psnr * batch_size_actual
+#         accumulators['psnr_count'] += batch_size_actual
         
-        # === ECS ===
-        max_ssp_truth_idx = np.nanargmax(ssp_truth_np, axis=1)
-        max_ssp_ae_idx = np.nanargmax(ssp_ae_np, axis=1)
-        batch_ecs = np.abs(depth_array[max_ssp_truth_idx] - depth_array[max_ssp_ae_idx])
-        accumulators['ecs_arr'].append(batch_ecs)
+#         # === ECS ===
+#         max_ssp_truth_idx = np.nanargmax(ssp_truth_np, axis=1)
+#         max_ssp_ae_idx = np.nanargmax(ssp_ae_np, axis=1)
+#         batch_ecs = np.abs(depth_array[max_ssp_truth_idx] - depth_array[max_ssp_ae_idx])
+#         accumulators['ecs_arr'].append(batch_ecs)
         
-        # === Extremum Position Error ===
-        batch_extremum_pos = get_extremum_position_error(ssp_truth_np, ssp_ae_np, depth_array)
-        accumulators['extremum_pos_arr'].append(batch_extremum_pos)
+#         # === Extremum Position Error ===
+#         batch_extremum_pos = get_extremum_position_error(ssp_truth_np, ssp_ae_np, depth_array)
+#         accumulators['extremum_pos_arr'].append(batch_extremum_pos)
         
-        # === F1 Score ===
-        min_max_idx_truth = get_min_max_idx(ssp_truth_np, axs=1, pad=False)
-        min_max_idx_ae = get_min_max_idx(ssp_ae_np, axs=1, pad=False)
-        batch_f1 = get_f1_score(min_max_idx_truth, min_max_idx_ae, axs=1, kernel_size=10)
-        accumulators['f1_score_arr'].append(batch_f1)
+#         # === F1 Score ===
+#         min_max_idx_truth = get_min_max_idx(ssp_truth_np, axs=1, pad=False)
+#         min_max_idx_ae = get_min_max_idx(ssp_ae_np, axs=1, pad=False)
+#         batch_f1 = get_f1_score(min_max_idx_truth, min_max_idx_ae, axs=1, kernel_size=10)
+#         accumulators['f1_score_arr'].append(batch_f1)
         
-        # === Pearson Correlation ===
-        pears = pearsonr(
-            ssp_truth_np.transpose(1, 0, 2, 3).reshape(ssp_truth_np.shape[1], -1),
-            ssp_ae_np.transpose(1, 0, 2, 3).reshape(ssp_ae_np.shape[1], -1)
-        )
-        batch_pearson = pears.statistic.reshape(batch_size_actual, ssp_truth_np.shape[2], ssp_truth_np.shape[3])
-        accumulators['pearson_corr_arr'].append(batch_pearson)
+#         # === Pearson Correlation ===
+#         pears = pearsonr(
+#             ssp_truth_np.transpose(1, 0, 2, 3).reshape(ssp_truth_np.shape[1], -1),
+#             ssp_ae_np.transpose(1, 0, 2, 3).reshape(ssp_ae_np.shape[1], -1)
+#         )
+#         batch_pearson = pears.statistic.reshape(batch_size_actual, ssp_truth_np.shape[2], ssp_truth_np.shape[3])
+#         accumulators['pearson_corr_arr'].append(batch_pearson)
         
-        # === R² Score ===
-        batch_ss_res = ((ssp_ae_np - ssp_truth_np) ** 2).sum()
-        batch_ss_tot = ((ssp_truth_np - ssp_truth_np.mean()) ** 2).sum()
-        accumulators['r2_res'] += batch_ss_res
-        accumulators['r2_tot'] += batch_ss_tot
+#         # === R² Score ===
+#         batch_ss_res = ((ssp_ae_np - ssp_truth_np) ** 2).sum()
+#         batch_ss_tot = ((ssp_truth_np - ssp_truth_np.mean()) ** 2).sum()
+#         accumulators['r2_res'] += batch_ss_res
+#         accumulators['r2_tot'] += batch_ss_tot
         
-        # === DTW ===
-        batch_dtw = get_dtw_arr(ssp_truth_np, ssp_ae_np, sample=100)
-        accumulators['dtw_arr'].append(batch_dtw)
+#         # === DTW ===
+#         batch_dtw = get_dtw_arr(ssp_truth_np, ssp_ae_np, sample=100)
+#         accumulators['dtw_arr'].append(batch_dtw)
         
-        # === Power Spectrum Metrics ===
-        if verbose:
-            print(f"  Batch {batch_idx//batch_size + 1}: Computing power spectrum metrics...")
-        power_truth, freqs = compute_power_spectrum(ssp_truth_batch, dim="z", detrend=True, window=True)
-        power_ae, _ = compute_power_spectrum(ssp_ae_batch, dim="z", detrend=True, window=True)
+#         # === Power Spectrum Metrics ===
+#         if verbose:
+#             print(f"  Batch {batch_idx//batch_size + 1}: Computing power spectrum metrics...")
+#         power_truth, freqs = compute_power_spectrum(ssp_truth_batch, dim="z", detrend=True, window=True)
+#         power_ae, _ = compute_power_spectrum(ssp_ae_batch, dim="z", detrend=True, window=True)
         
-        eps = 1e-12
-        log_truth = np.log(power_truth + eps)
-        log_ae = np.log(power_ae + eps)
-        batch_lsd = np.sqrt(np.mean((log_truth - log_ae)**2, axis=1))
-        accumulators['lsd_arr'].append(batch_lsd)
+#         eps = 1e-12
+#         log_truth = np.log(power_truth + eps)
+#         log_ae = np.log(power_ae + eps)
+#         batch_lsd = np.sqrt(np.mean((log_truth - log_ae)**2, axis=1))
+#         accumulators['lsd_arr'].append(batch_lsd)
         
-        peak_truth = np.argmax(power_truth, axis=1)
-        peak_ae = np.argmax(power_ae, axis=1)
-        batch_peak_freq = np.abs(freqs[peak_truth] - freqs[peak_ae])
-        accumulators['peak_freq_error_arr'].append(batch_peak_freq)
+#         peak_truth = np.argmax(power_truth, axis=1)
+#         peak_ae = np.argmax(power_ae, axis=1)
+#         batch_peak_freq = np.abs(freqs[peak_truth] - freqs[peak_ae])
+#         accumulators['peak_freq_error_arr'].append(batch_peak_freq)
         
-        batch_wd = get_wd_freq_arr(power_truth, power_ae, freqs, sample=1)
-        accumulators['power_wasserstein_arr'].append(batch_wd)
+#         batch_wd = get_wd_freq_arr(power_truth, power_ae, freqs, sample=1)
+#         accumulators['power_wasserstein_arr'].append(batch_wd)
         
-        del power_truth, power_ae
-        gc.collect()
+#         del power_truth, power_ae
+#         gc.collect()
         
-        # === SSIM ===
-        if verbose:
-            print(f"  Batch {batch_idx//batch_size + 1}: Computing SSIM...")
-        batch_ssim = compute_ssim(ssp_truth_np, ssp_ae_np, sample=1)
-        accumulators['ssim_arr'].append(batch_ssim)
+#         # === SSIM ===
+#         if verbose:
+#             print(f"  Batch {batch_idx//batch_size + 1}: Computing SSIM...")
+#         batch_ssim = compute_ssim(ssp_truth_np, ssp_ae_np, sample=1)
+#         accumulators['ssim_arr'].append(batch_ssim)
         
-        # === MS-SSIM ===
-        batch_mssim = compute_ms_ssim(ssp_truth_np, ssp_ae_np, sample=100)
-        accumulators['mssim_arr'].append(batch_mssim)
+#         # === MS-SSIM ===
+#         batch_mssim = compute_ms_ssim(ssp_truth_np, ssp_ae_np, sample=100)
+#         accumulators['mssim_arr'].append(batch_mssim)
         
-        # === PCA Transform (if needed) ===
-        if pca is not None:
-            batch_ae_pca = pca.transform(ssp_ae_np.transpose(0, 2, 3, 1).reshape(-1, ssp_ae_np.shape[1]))
-            if accumulators['pae_pca'] is None:
-                accumulators['pae_pca'] = batch_ae_pca
-            else:
-                accumulators['pae_pca'] = np.vstack([accumulators['pae_pca'], batch_ae_pca])
+#         # === PCA Transform (if needed) ===
+#         if pca is not None:
+#             batch_ae_pca = pca.transform(ssp_ae_np.transpose(0, 2, 3, 1).reshape(-1, ssp_ae_np.shape[1]))
+#             if accumulators['pae_pca'] is None:
+#                 accumulators['pae_pca'] = batch_ae_pca
+#             else:
+#                 accumulators['pae_pca'] = np.vstack([accumulators['pae_pca'], batch_ae_pca])
     
-    # === Aggregate results ===
-    if verbose:
-        print("\nAggregating batch results...")
+#     # === Aggregate results ===
+#     if verbose:
+#         print("\nAggregating batch results...")
     
-    metrics_dict["rmse"] = float(accumulators['rmse_sum'] / accumulators['rmse_count']) if accumulators['rmse_count'] > 0 else 0.0
-    metrics_dict["mae"] = float(accumulators['mae_sum'] / accumulators['mae_count']) if accumulators['mae_count'] > 0 else 0.0
-    metrics_dict["psnr"] = float(accumulators['psnr_sum'] / accumulators['psnr_count']) if accumulators['psnr_count'] > 0 else 0.0
+#     metrics_dict["rmse"] = float(accumulators['rmse_sum'] / accumulators['rmse_count']) if accumulators['rmse_count'] > 0 else 0.0
+#     metrics_dict["mae"] = float(accumulators['mae_sum'] / accumulators['mae_count']) if accumulators['mae_count'] > 0 else 0.0
+#     metrics_dict["psnr"] = float(accumulators['psnr_sum'] / accumulators['psnr_count']) if accumulators['psnr_count'] > 0 else 0.0
     
-    # Concatenate per-profile metrics
-    ecs_arr = np.concatenate(accumulators['ecs_arr']) if accumulators['ecs_arr'] else np.array([])
-    extremum_pos_arr = np.concatenate(accumulators['extremum_pos_arr']) if accumulators['extremum_pos_arr'] else np.array([])
-    f1_score_arr = np.concatenate(accumulators['f1_score_arr']) if accumulators['f1_score_arr'] else np.array([])
-    pearson_arr = np.concatenate(accumulators['pearson_corr_arr']) if accumulators['pearson_corr_arr'] else np.array([])
-    dtw_arr = np.concatenate(accumulators['dtw_arr']) if accumulators['dtw_arr'] else np.array([])
-    lsd_arr = np.concatenate(accumulators['lsd_arr']) if accumulators['lsd_arr'] else np.array([])
-    peak_freq_arr = np.concatenate(accumulators['peak_freq_error_arr']) if accumulators['peak_freq_error_arr'] else np.array([])
-    wasserstein_arr = np.concatenate(accumulators['wasserstein_arr']) if accumulators['wasserstein_arr'] else np.array([])
-    ssim_arr = np.concatenate(accumulators['ssim_arr']) if accumulators['ssim_arr'] else np.array([])
-    mssim_arr = np.concatenate(accumulators['mssim_arr']) if accumulators['mssim_arr'] else np.array([])
+#     # Concatenate per-profile metrics
+#     ecs_arr = np.concatenate(accumulators['ecs_arr']) if accumulators['ecs_arr'] else np.array([])
+#     extremum_pos_arr = np.concatenate(accumulators['extremum_pos_arr']) if accumulators['extremum_pos_arr'] else np.array([])
+#     f1_score_arr = np.concatenate(accumulators['f1_score_arr']) if accumulators['f1_score_arr'] else np.array([])
+#     pearson_arr = np.concatenate(accumulators['pearson_corr_arr']) if accumulators['pearson_corr_arr'] else np.array([])
+#     dtw_arr = np.concatenate(accumulators['dtw_arr']) if accumulators['dtw_arr'] else np.array([])
+#     lsd_arr = np.concatenate(accumulators['lsd_arr']) if accumulators['lsd_arr'] else np.array([])
+#     peak_freq_arr = np.concatenate(accumulators['peak_freq_error_arr']) if accumulators['peak_freq_error_arr'] else np.array([])
+#     wasserstein_arr = np.concatenate(accumulators['wasserstein_arr']) if accumulators['wasserstein_arr'] else np.array([])
+#     ssim_arr = np.concatenate(accumulators['ssim_arr']) if accumulators['ssim_arr'] else np.array([])
+#     mssim_arr = np.concatenate(accumulators['mssim_arr']) if accumulators['mssim_arr'] else np.array([])
     
-    metrics_dict["ecs"] = float(np.mean(ecs_arr)) if len(ecs_arr) > 0 else 0.0
-    metrics_dict["extremum_pos"] = float(np.mean(extremum_pos_arr)) if len(extremum_pos_arr) > 0 else 0.0
-    metrics_dict["f1_score"] = float(np.mean(f1_score_arr)) if len(f1_score_arr) > 0 else 0.0
-    metrics_dict["pearson"] = float(np.mean(pearson_arr)) if len(pearson_arr) > 0 else 0.0
-    metrics_dict["pearson_pvalue"] = 0.0  # Placeholder - would need per-batch p-values
+#     metrics_dict["ecs"] = float(np.mean(ecs_arr)) if len(ecs_arr) > 0 else 0.0
+#     metrics_dict["extremum_pos"] = float(np.mean(extremum_pos_arr)) if len(extremum_pos_arr) > 0 else 0.0
+#     metrics_dict["f1_score"] = float(np.mean(f1_score_arr)) if len(f1_score_arr) > 0 else 0.0
+#     metrics_dict["pearson"] = float(np.mean(pearson_arr)) if len(pearson_arr) > 0 else 0.0
+#     metrics_dict["pearson_pvalue"] = 0.0  # Placeholder - would need per-batch p-values
     
-    # R² Score aggregation
-    r2_score = 1 - (accumulators['r2_res'] / accumulators['r2_tot']) if accumulators['r2_tot'] != 0 else 0.0
-    metrics_dict["r2_score"] = float(r2_score)
+#     # R² Score aggregation
+#     r2_score = 1 - (accumulators['r2_res'] / accumulators['r2_tot']) if accumulators['r2_tot'] != 0 else 0.0
+#     metrics_dict["r2_score"] = float(r2_score)
     
-    metrics_dict["dtw"] = float(np.mean(dtw_arr)) if len(dtw_arr) > 0 else 0.0
-    metrics_dict["lsd"] = float(np.mean(lsd_arr)) if len(lsd_arr) > 0 else 0.0
-    metrics_dict["peak_freq_error"] = float(np.mean(peak_freq_arr)) if len(peak_freq_arr) > 0 else 0.0
-    metrics_dict["wasserstein"] = float(np.mean(wasserstein_arr)) if len(wasserstein_arr) > 0 else 0.0
-    metrics_dict["ssim"] = float(np.mean(ssim_arr)) if len(ssim_arr) > 0 else 0.0
-    metrics_dict["ms_ssim"] = float(np.mean(mssim_arr)) if len(mssim_arr) > 0 else 0.0
+#     metrics_dict["dtw"] = float(np.mean(dtw_arr)) if len(dtw_arr) > 0 else 0.0
+#     metrics_dict["lsd"] = float(np.mean(lsd_arr)) if len(lsd_arr) > 0 else 0.0
+#     metrics_dict["peak_freq_error"] = float(np.mean(peak_freq_arr)) if len(peak_freq_arr) > 0 else 0.0
+#     metrics_dict["wasserstein"] = float(np.mean(wasserstein_arr)) if len(wasserstein_arr) > 0 else 0.0
+#     metrics_dict["ssim"] = float(np.mean(ssim_arr)) if len(ssim_arr) > 0 else 0.0
+#     metrics_dict["ms_ssim"] = float(np.mean(mssim_arr)) if len(mssim_arr) > 0 else 0.0
     
-    # === NSR (must process full dataset) ===
-    if verbose:
-        print("\n" + "="*70)
-        print("Computing NSR (spectral resolution)...")
-        print("="*70)
-        log_memory_checkpoint("Before NSR computation", verbose=True)
-        log_data_shapes({
-            'ssp_truth_da': ssp_truth_da,
-            'ssp_ae_da': ssp_ae_da
-        }, "NSR Input Data Shapes")
+#     # === NSR (must process full dataset) ===
+#     if verbose:
+#         print("\n" + "="*70)
+#         print("Computing NSR (spectral resolution)...")
+#         print("="*70)
+#         log_memory_checkpoint("Before NSR computation", verbose=True)
+#         log_data_shapes({
+#             'ssp_truth_da': ssp_truth_da,
+#             'ssp_ae_da': ssp_ae_da
+#         }, "NSR Input Data Shapes")
     
-    try:
-        for idx_t, t_r in enumerate([0.1, 0.5, 0.9], 1):
-            if verbose:
-                print(f"\n  [{idx_t}/3] Computing NSR with target_ratio={t_r}...")
-                log_memory_checkpoint(f"Before nsr_depth (t_r={t_r})", verbose=True)
+#     try:
+#         for idx_t, t_r in enumerate([0.1, 0.5, 0.9], 1):
+#             if verbose:
+#                 print(f"\n  [{idx_t}/3] Computing NSR with target_ratio={t_r}...")
+#                 log_memory_checkpoint(f"Before nsr_depth (t_r={t_r})", verbose=True)
             
-            nsr_depth = compute_nsr_along_depth(ssp_truth_da, ssp_ae_da, target_ratio=t_r)
+#             nsr_depth = compute_nsr_along_depth(ssp_truth_da, ssp_ae_da, target_ratio=t_r)
             
-            if verbose:
-                log_memory_checkpoint(f"After nsr_depth (t_r={t_r})", verbose=True)
-                print(f"    nsr_depth result: {nsr_depth}")
+#             if verbose:
+#                 log_memory_checkpoint(f"After nsr_depth (t_r={t_r})", verbose=True)
+#                 print(f"    nsr_depth result: {nsr_depth}")
             
-            nsr_map = compute_nsr_spatial_map(ssp_truth_da, ssp_ae_da, target_ratio=t_r)
+#             nsr_map = compute_nsr_spatial_map(ssp_truth_da, ssp_ae_da, target_ratio=t_r)
             
-            if verbose:
-                log_memory_checkpoint(f"After nsr_map (t_r={t_r})", verbose=True)
-                print(f"    nsr_map result: {nsr_map}")
+#             if verbose:
+#                 log_memory_checkpoint(f"After nsr_map (t_r={t_r})", verbose=True)
+#                 print(f"    nsr_map result: {nsr_map}")
             
-            metrics_dict[f"nsr_depth_resolution_{int(t_r*100)}"] = float(nsr_depth["resolution"])
-            metrics_dict[f"nsr_spatial_resolution_{int(t_r*100)}"] = float(nsr_map["resolution"])
+#             metrics_dict[f"nsr_depth_resolution_{int(t_r*100)}"] = float(nsr_depth["resolution"])
+#             metrics_dict[f"nsr_spatial_resolution_{int(t_r*100)}"] = float(nsr_map["resolution"])
             
-            if verbose:
-                print(f"    ✓ Completed NSR for t_r={t_r}")
-    except Exception as e:
-        if verbose:
-            print(f"\n  ✗ Error during NSR computation: {e}")
-            log_memory_checkpoint("After NSR error", verbose=True)
-            import traceback
-            traceback.print_exc()
-        raise
+#             if verbose:
+#                 print(f"    ✓ Completed NSR for t_r={t_r}")
+#     except Exception as e:
+#         if verbose:
+#             print(f"\n  ✗ Error during NSR computation: {e}")
+#             log_memory_checkpoint("After NSR error", verbose=True)
+#             import traceback
+#             traceback.print_exc()
+#         raise
     
-    if verbose:
-        log_memory_checkpoint("After all NSR computations", verbose=True)
-        gc.collect()
-        log_memory_checkpoint("After garbage collection", verbose=True)
+#     if verbose:
+#         log_memory_checkpoint("After all NSR computations", verbose=True)
+#         gc.collect()
+#         log_memory_checkpoint("After garbage collection", verbose=True)
     
-    # === PCA Reconstruction ===
-    if pca is not None and accumulators['pae_pca'] is not None:
-        ssp_truth_np = ssp_truth_da.values.astype(np.float32)
-        ssp_ae_np = ssp_ae_da.values.astype(np.float32)
+#     # === PCA Reconstruction ===
+#     if pca is not None and accumulators['pae_pca'] is not None:
+#         ssp_truth_np = ssp_truth_da.values.astype(np.float32)
+#         ssp_ae_np = ssp_ae_da.values.astype(np.float32)
         
-        for n_components in [3, 6]:
-            ae_pca_n = accumulators['pae_pca'][:, :n_components]
-            ssp_ae_pca_recon = ae_pca_n @ pca.components_[:n_components, :] + pca.mean_
-            ssp_ae_pca_recon = ssp_ae_pca_recon.reshape(
-                ssp_ae_np.shape[0], ssp_ae_np.shape[2], ssp_ae_np.shape[3], ssp_ae_np.shape[1]
-            ).transpose(0, 3, 1, 2)
-            rmse_pca = float(np.sqrt(((ssp_ae_pca_recon - ssp_truth_np) ** 2).mean()))
-            metrics_dict[f"rmse_pca_{n_components}_components"] = rmse_pca
+#         for n_components in [3, 6]:
+#             ae_pca_n = accumulators['pae_pca'][:, :n_components]
+#             ssp_ae_pca_recon = ae_pca_n @ pca.components_[:n_components, :] + pca.mean_
+#             ssp_ae_pca_recon = ssp_ae_pca_recon.reshape(
+#                 ssp_ae_np.shape[0], ssp_ae_np.shape[2], ssp_ae_np.shape[3], ssp_ae_np.shape[1]
+#             ).transpose(0, 3, 1, 2)
+#             rmse_pca = float(np.sqrt(((ssp_ae_pca_recon - ssp_truth_np) ** 2).mean()))
+#             metrics_dict[f"rmse_pca_{n_components}_components"] = rmse_pca
     
-    if verbose:
-        print(f"\n✓ Computed {len(metrics_dict)} metric values")
+#     if verbose:
+#         print(f"\n✓ Computed {len(metrics_dict)} metric values")
     
-    return metrics_dict, data
+#     return metrics_dict, data
 
 
 def compute_metrics(
@@ -805,7 +828,9 @@ def compute_metrics(
     ssp_ae_da: xr.DataArray,
     depth_array: np.ndarray,
     data_dict_metrics: List[str],
+    metrics_to_compute: Optional[List[str]] = None,
     pca: Optional[PCA] = None,
+    sampling_config: Optional[Dict[str, int]] = None,
     verbose: bool = False,
 ) -> Dict:
     """
@@ -824,8 +849,9 @@ def compute_metrics(
         ["RMSE", "MAE", "PSNR", "ECS", "EXTREMUM_POS_ERROR", "F1_SCORE",
          "PEARSON", "R2_SCORE", "DTW", "LSD", "PEAK_FREQ_ERROR", 
          "WASSERSTEIN", "SSIM", "MS_SSIM", "NSR"]
-    compute_pca : bool, optional
-        If True, also compute PCA-based metrics
+    metrics_to_compute : Optional[List[str]], optional
+        Explicit list of aggregate metrics to compute. If None, compute all.
+        Example: ["RMSE"] to compute only RMSE.
     verbose : bool, optional
         If True, print progress information
         
@@ -835,6 +861,51 @@ def compute_metrics(
         Dictionary containing computed metrics and their statistics
     """
     metrics_dict = {}
+    metric_timings_s: Dict[str, float] = {}
+
+    default_sampling = {
+        'extremum_pos_sample': 10,
+        'dtw_sample': 10,
+        'wasserstein_sample': 1,
+        'power_wasserstein_sample': 1,
+        'ssim_sample': 10,
+        'msssim_sample': 10,
+        'nsr_time_sample': 10,
+    }
+    if sampling_config is not None:
+        default_sampling.update({k: int(v) for k, v in sampling_config.items()})
+    sampling = default_sampling
+
+    supported_metrics = {
+        "RMSE",
+        "MAE",
+        "PSNR",
+        "ECS",
+        "EXTREMUM_POS_ERROR",
+        "F1_SCORE",
+        "PEARSON",
+        "R2_SCORE",
+        "DTW",
+        "WASSERSTEIN",
+        "LSD",
+        "PEAK_FREQ_ERROR",
+        "POWER_WASSERSTEIN",
+        "SSIM",
+        "MS_SSIM",
+        "RMSE_PCA",
+        "NSR",
+    }
+
+    if metrics_to_compute is None:
+        selected_metrics = supported_metrics
+    else:
+        selected_metrics = {str(m).upper() for m in metrics_to_compute}
+        unknown_metrics = sorted(selected_metrics - supported_metrics)
+        if unknown_metrics:
+            raise ValueError(f"Unknown metrics in metrics_to_compute: {unknown_metrics}")
+
+    def should_compute(metric_name: str) -> bool:
+        return metric_name in selected_metrics
 
     
     # Convert to numpy arrays
@@ -850,230 +921,346 @@ def compute_metrics(
         #print(f"Available metrics: {data_dict_metrics}\n")
     
     # RMSE
-    if verbose:
-        print("  Computing RMSE...")
-    metrics_dict["rmse"] = float(np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).mean()))
-    if "RMSE" in data_dict_metrics:
-        metric_arr = np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).mean(dim="z", skipna=True)).data 
-        data["RMSE"] = get_best_worst_random(metric_arr, ssp_truth, ssp_ae, "RMSE", best_is_min=True)
+    if should_compute("RMSE"):
+        t_rmse = time.perf_counter()
+        if verbose:
+            print("  Computing RMSE...")
+        metrics_dict["rmse"] = float(np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).mean()))
+        if "RMSE" in data_dict_metrics:
+            metric_arr = np.sqrt(((ssp_ae_da - ssp_truth_da) ** 2).mean(dim="z", skipna=True)).data
+            data["RMSE"] = get_best_worst_random(metric_arr, ssp_truth, ssp_ae, "RMSE", best_is_min=True)
+        log_metric_timing("RMSE", t_rmse, metric_timings_s, verbose=True)
 
     # MAE
-    if verbose:
-        print("  Computing MAE...")
-    mae_da = np.abs(ssp_ae_da - ssp_truth_da).mean(dim="z", skipna=True)
-    metrics_dict["mae"] = float(mae_da.mean())
-    if "MAE" in data_dict_metrics:
-        data["MAE"] = get_best_worst_random(mae_da.values, ssp_truth, ssp_ae, "MAE", best_is_min=True)
+    if should_compute("MAE"):
+        t_mae = time.perf_counter()
+        if verbose:
+            print("  Computing MAE...")
+        mae_da = np.abs(ssp_ae_da - ssp_truth_da).mean(dim="z", skipna=True)
+        metrics_dict["mae"] = float(mae_da.mean())
+        if "MAE" in data_dict_metrics:
+            data["MAE"] = get_best_worst_random(mae_da.values, ssp_truth, ssp_ae, "MAE", best_is_min=True)
+        log_metric_timing("MAE", t_mae, metric_timings_s, verbose=True)
 
     
     # PSNR
-    if verbose:
-        print("  Computing PSNR...")
-    mse_per_location = ((ssp_ae_da - ssp_truth_da) ** 2).mean(dim="z", skipna=True)
-    global_mse = float(np.nanmean(mse_per_location))
-    max_val_ssp = float(np.nanmax(ssp_truth_da.values))
-    global_psnr = 10 * np.log10((max_val_ssp ** 2) / (global_mse + 1e-10))
-    metrics_dict["psnr"] = float(global_psnr)
-
-    if "PSNR" in data_dict_metrics:
+    if should_compute("PSNR"):
+        t_psnr = time.perf_counter()
+        if verbose:
+            print("  Computing PSNR...")
+        mse_per_location = ((ssp_ae_da - ssp_truth_da) ** 2).mean(dim="z", skipna=True)
+        global_mse = float(np.nanmean(mse_per_location))
         max_val_ssp = float(np.nanmax(ssp_truth_da.values))
-        psnr_arr = 10 * np.log10(max_val_ssp**2 / mse_per_location + 1e-10).data
-        # psnr_da = psnr_da.where(np.isfinite(psnr_da), np.nan)
-        # metrics_dict["psnr"] = float(np.nanmean(psnr_da))
-        data["PSNR"] = get_best_worst_random(psnr_arr, ssp_truth, ssp_ae, "PSNR", best_is_min=False)
+        global_psnr = 10 * np.log10((max_val_ssp ** 2) / (global_mse + 1e-10))
+        metrics_dict["psnr"] = float(global_psnr)
+
+        if "PSNR" in data_dict_metrics:
+            max_val_ssp = float(np.nanmax(ssp_truth_da.values))
+            psnr_arr = 10 * np.log10(max_val_ssp**2 / mse_per_location + 1e-10).data
+            data["PSNR"] = get_best_worst_random(psnr_arr, ssp_truth, ssp_ae, "PSNR", best_is_min=False)
+        log_metric_timing("PSNR", t_psnr, metric_timings_s, verbose=True)
     
 
     # ECS (Extremum Closest to Surface)
-    if verbose:
-        print("  Computing ECS...")
-    max_ssp_truth_idx = np.nanargmax(ssp_truth, axis=1)
-    max_ssp_ae_idx = np.nanargmax(ssp_ae, axis=1)
-    ecs = np.abs(depth_array[max_ssp_truth_idx] - depth_array[max_ssp_ae_idx])
-    metrics_dict["ecs"] = float(np.mean(ecs))
-    if "ECS" in data_dict_metrics:
-        data["ECS"] = get_best_worst_random(ecs, ssp_truth, ssp_ae, "ECS", best_is_min=True)
+    if should_compute("ECS"):
+        min_depth_ecs = 0
+        min_ecs_idx = np.argmax(depth_array>=min_depth_ecs)
+        t_ecs = time.perf_counter()
+        if verbose:
+            print("  Computing ECS...")
+        max_ssp_truth_idx = np.nanargmax(ssp_truth[:,min_ecs_idx:], axis=1)
+        max_ssp_ae_idx = np.nanargmax(ssp_ae[:,min_ecs_idx:], axis=1)
+        ecs = np.abs(depth_array[min_ecs_idx + max_ssp_truth_idx] - depth_array[min_ecs_idx + max_ssp_ae_idx])
+        metrics_dict["ecs"] = float(np.mean(ecs))
+        if "ECS" in data_dict_metrics:
+            data["ECS"] = get_best_worst_random(ecs, ssp_truth, ssp_ae, "ECS", best_is_min=True)
+        log_metric_timing("ECS", t_ecs, metric_timings_s, verbose=True)
 
     # Extremum Position Error
-    if verbose:
-        print("  Computing Extremum Position Error...")
-    extremum_position_error_arr = get_extremum_position_error(ssp_truth, ssp_ae, depth_array, sample=10)
-    metrics_dict["extremum_pos"] = float(np.mean(extremum_position_error_arr))
-    if "EXTREMUM_POS_ERROR" in data_dict_metrics and extremum_position_error_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile values
-        data["EXTREMUM_POS_ERROR"] = get_best_worst_random(extremum_position_error_arr, ssp_truth, ssp_ae, "EXTREMUM_POS_ERROR", best_is_min=True)
+    if should_compute("EXTREMUM_POS_ERROR"):
+        t_extrema_pos = time.perf_counter()
+        if verbose:
+            print("  Computing Extremum Position Error...")
+        extremum_position_error_arr = get_extremum_position_error(
+            ssp_truth,
+            ssp_ae,
+            depth_array,
+            sample=sampling['extremum_pos_sample'],
+        )
+        metrics_dict["extremum_pos"] = float(np.mean(extremum_position_error_arr))
+        if "EXTREMUM_POS_ERROR" in data_dict_metrics and extremum_position_error_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile values
+            data["EXTREMUM_POS_ERROR"] = get_best_worst_random(extremum_position_error_arr, ssp_truth, ssp_ae, "EXTREMUM_POS_ERROR", best_is_min=True)
+        log_metric_timing("EXTREMUM_POS_ERROR", t_extrema_pos, metric_timings_s, verbose=True)
 
     
     # F1 Score
-    if verbose:
-        print("  Computing F1 Score...")
-    min_max_idx_truth = get_min_max_idx(ssp_truth, axs=1, pad=False)
-    min_max_idx_ae = get_min_max_idx(ssp_ae, axs=1, pad=False)
-    f1_score = get_f1_score(min_max_idx_truth, min_max_idx_ae, axs=1, kernel_size=10)
-    metrics_dict["f1_score"] = float(np.mean(f1_score))
-    if "F1_SCORE" in data_dict_metrics:
-        data["F1_SCORE"] = get_best_worst_random(f1_score, ssp_truth, ssp_ae, "F1_SCORE", best_is_min=False)
+    if should_compute("F1_SCORE"):
+        t_f1 = time.perf_counter()
+        if verbose:
+            print("  Computing F1 Score...")
+        min_max_idx_truth = get_min_max_idx(ssp_truth, axs=1, pad=False)
+        min_max_idx_ae = get_min_max_idx(ssp_ae, axs=1, pad=False)
+        f1_score = get_f1_score(min_max_idx_truth, min_max_idx_ae, axs=1, kernel_size=10)
+        metrics_dict["f1_score"] = float(np.mean(f1_score))
+        if "F1_SCORE" in data_dict_metrics:
+            data["F1_SCORE"] = get_best_worst_random(f1_score, ssp_truth, ssp_ae, "F1_SCORE", best_is_min=False)
+        log_metric_timing("F1_SCORE", t_f1, metric_timings_s, verbose=True)
 
     # Pearson Correlation
-    if verbose:
-        print("  Computing Pearson Correlation...")
-    pears = pearsonr(
-        ssp_truth.transpose(1, 0, 2, 3).reshape(ssp_truth.shape[1], -1),
-        ssp_ae.transpose(1, 0, 2, 3).reshape(ssp_ae.shape[1], -1)
-    )
-    pearson_corr = pears.statistic.reshape(ssp_truth.shape[0],ssp_truth.shape[2], ssp_truth.shape[3])
-    metrics_dict["pearson"] = float(pearson_corr.mean())
-    metrics_dict["pearson_pvalue"] = float(pears.pvalue.mean())
-    if "PEARSON" in data_dict_metrics:
-        data["PEARSON"] = get_best_worst_random(pearson_corr, ssp_truth, ssp_ae, "PEARSON", best_is_min=False)
+    if should_compute("PEARSON"):
+        t_pearson = time.perf_counter()
+        if verbose:
+            print("  Computing Pearson Correlation...")
+        pears = pearsonr(
+            ssp_truth.transpose(1, 0, 2, 3).reshape(ssp_truth.shape[1], -1),
+            ssp_ae.transpose(1, 0, 2, 3).reshape(ssp_ae.shape[1], -1)
+        )
+        pearson_corr = pears.statistic.reshape(ssp_truth.shape[0],ssp_truth.shape[2], ssp_truth.shape[3])
+        metrics_dict["pearson"] = float(pearson_corr.mean())
+        metrics_dict["pearson_pvalue"] = float(pears.pvalue.mean())
+        if "PEARSON" in data_dict_metrics:
+            data["PEARSON"] = get_best_worst_random(pearson_corr, ssp_truth, ssp_ae, "PEARSON", best_is_min=False)
+        log_metric_timing("PEARSON", t_pearson, metric_timings_s, verbose=True)
     
     # R² Score
-    if verbose:
-        print("  Computing R² Score...")
-    ss_res = ((ssp_ae_da - ssp_truth_da) ** 2).sum()
-    ss_tot = ((ssp_truth_da - ssp_truth_da.mean()) ** 2).sum()
-    r2_score = 1 - (ss_res / ss_tot)
-    metrics_dict["r2_score"] = float(r2_score.values)
-    if "R2_SCORE" in data_dict_metrics:
-        r2_score_arr = 1 - (((ssp_ae_da - ssp_truth_da) ** 2).sum(dim="z", skipna=True) / ((ssp_truth_da - ssp_truth_da.mean(dim="z", skipna=True)) ** 2).sum(dim="z", skipna=True))
-        data["R2_SCORE"] = get_best_worst_random(r2_score_arr.values, ssp_truth, ssp_ae, "R2_SCORE", best_is_min=False)
+    if should_compute("R2_SCORE"):
+        t_r2 = time.perf_counter()
+        if verbose:
+            print("  Computing R² Score...")
+        ss_res = ((ssp_ae_da - ssp_truth_da) ** 2).sum()
+        ss_tot = ((ssp_truth_da - ssp_truth_da.mean()) ** 2).sum()
+        r2_score = 1 - (ss_res / ss_tot)
+        metrics_dict["r2_score"] = float(r2_score.values)
+        if "R2_SCORE" in data_dict_metrics:
+            r2_score_arr = 1 - (((ssp_ae_da - ssp_truth_da) ** 2).sum(dim="z", skipna=True) / ((ssp_truth_da - ssp_truth_da.mean(dim="z", skipna=True)) ** 2).sum(dim="z", skipna=True))
+            data["R2_SCORE"] = get_best_worst_random(r2_score_arr.values, ssp_truth, ssp_ae, "R2_SCORE", best_is_min=False)
+        log_metric_timing("R2_SCORE", t_r2, metric_timings_s, verbose=True)
     
     # DTW
+    if should_compute("DTW"):
+        t_dtw = time.perf_counter()
 
-    if verbose:
-        print("  Computing DTW...")
-    dtw_arr = get_dtw_arr(ssp_truth, ssp_ae, sample=10)
-    metrics_dict["dtw"] = float(np.mean(dtw_arr))
-    if "DTW" in data_dict_metrics and dtw_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile DTW values
-        data["DTW"] = get_best_worst_random(dtw_arr, ssp_truth, ssp_ae, "DTW", best_is_min=True)
-    del dtw_arr
-    gc.collect()
+        if verbose:
+            print("  Computing DTW...")
+        dtw_arr = get_dtw_arr(ssp_truth, ssp_ae, sample=sampling['dtw_sample'])
+        metrics_dict["dtw"] = float(np.mean(dtw_arr))
+        if "DTW" in data_dict_metrics and dtw_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile DTW values
+            data["DTW"] = get_best_worst_random(dtw_arr, ssp_truth, ssp_ae, "DTW", best_is_min=True)
+        del dtw_arr
+        gc.collect()
+        log_metric_timing("DTW", t_dtw, metric_timings_s, verbose=True)
 
 
     # warseinstein
+    if should_compute("WASSERSTEIN"):
+        t_wasserstein = time.perf_counter()
 
-    wd_arr = get_wd_arr(ssp_truth, ssp_ae, sample=1)
-    metrics_dict["wasserstein"] = float(np.mean(wd_arr))
-    if "WASSERSTEIN" in data_dict_metrics and wd_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile Wasserstein values
-        data["WASSERSTEIN"] = get_best_worst_random(wd_arr, ssp_truth, ssp_ae, "WASSERSTEIN", best_is_min=True)
-    del wd_arr
-    gc.collect()
+        wd_arr = get_wd_arr(ssp_truth, ssp_ae, sample=sampling['wasserstein_sample'])
+        metrics_dict["wasserstein"] = float(np.mean(wd_arr))
+        if "WASSERSTEIN" in data_dict_metrics and wd_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile Wasserstein values
+            data["WASSERSTEIN"] = get_best_worst_random(wd_arr, ssp_truth, ssp_ae, "WASSERSTEIN", best_is_min=True)
+        del wd_arr
+        gc.collect()
+        log_metric_timing("WASSERSTEIN", t_wasserstein, metric_timings_s, verbose=True)
 
 
 
     # Power spectrum metrics (LSD, Peak Freq Error, Wasserstein)
+    if any(should_compute(m) for m in ("LSD", "PEAK_FREQ_ERROR", "POWER_WASSERSTEIN")):
+        t_power = time.perf_counter()
 
-    if verbose:
-        print("  Computing power spectrum metrics...")
-    power_da_truth, freqs = compute_power_spectrum(ssp_truth_da, dim="z", detrend=True, window=True)
-    power_da_ae, _ = compute_power_spectrum(ssp_ae_da, dim="z", detrend=True, window=True)
-    
-    
-    eps = 1e-12
-    log_truth = np.log(power_da_truth + eps)
-    log_rec = np.log(power_da_ae + eps)
-    lsd = np.sqrt(np.mean((log_truth - log_rec)**2))
-    metrics_dict["lsd"] = float(lsd)
-    if "LSD" in data_dict_metrics:
-        lsd_arr = np.sqrt(np.mean((log_truth - log_rec)**2, axis=1)).data
-        data["LSD"] = get_best_worst_random(lsd_arr, ssp_truth, ssp_ae, "LSD", best_is_min=True)
+        if verbose:
+            print("  Computing power spectrum metrics...")
+        power_da_truth, freqs = compute_power_spectrum(ssp_truth_da, dim="z", detrend=True, window=True)
+        power_da_ae, _ = compute_power_spectrum(ssp_ae_da, dim="z", detrend=True, window=True)
 
+        eps = 1e-12
+        log_truth = np.log(power_da_truth + eps)
+        log_rec = np.log(power_da_ae + eps)
 
-    peak_truth = np.argmax(power_da_truth.data, axis=1)
-    peak_rec = np.argmax(power_da_ae.data, axis=1)
-    peak_freq_error = np.abs(freqs[peak_truth] - freqs[peak_rec])
-    metrics_dict["peak_freq_error"] = float(np.mean(peak_freq_error))
-    if "PEAK_FREQ_ERROR" in data_dict_metrics:
-        data["PEAK_FREQ_ERROR"] = get_best_worst_random(peak_freq_error, ssp_truth, ssp_ae, "PEAK_FREQ_ERROR", best_is_min=True)
-    
-    
-    wd_arr = get_wd_freq_arr(power_da_truth.data, power_da_ae.data, freqs, sample=1)
-    metrics_dict["power_wasserstein"] = float(np.mean(wd_arr))
-    if "POWER_WASSERSTEIN" in data_dict_metrics and wd_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile Wasserstein values
-        data["POWER_WASSERSTEIN"] = get_best_worst_random(wd_arr, ssp_truth, ssp_ae, "POWER_WASSERSTEIN", best_is_min=True)
-    del wd_arr, power_da_truth, power_da_ae
-    gc.collect()
+        if should_compute("LSD"):
+            t_lsd = time.perf_counter()
+            lsd = np.sqrt(np.mean((log_truth - log_rec)**2))
+            metrics_dict["lsd"] = float(lsd)
+            if "LSD" in data_dict_metrics:
+                lsd_arr = np.sqrt(np.mean((log_truth - log_rec)**2, axis=1)).data
+                data["LSD"] = get_best_worst_random(lsd_arr, ssp_truth, ssp_ae, "LSD", best_is_min=True)
+            log_metric_timing("LSD", t_lsd, metric_timings_s, verbose=True)
+
+        if should_compute("PEAK_FREQ_ERROR"):
+            t_peak_freq = time.perf_counter()
+            peak_truth = np.argmax(power_da_truth.data, axis=1)
+            peak_rec = np.argmax(power_da_ae.data, axis=1)
+            peak_freq_error = np.abs(freqs[peak_truth] - freqs[peak_rec])
+            metrics_dict["peak_freq_error"] = float(np.mean(peak_freq_error))
+            if "PEAK_FREQ_ERROR" in data_dict_metrics:
+                data["PEAK_FREQ_ERROR"] = get_best_worst_random(peak_freq_error, ssp_truth, ssp_ae, "PEAK_FREQ_ERROR", best_is_min=True)
+            log_metric_timing("PEAK_FREQ_ERROR", t_peak_freq, metric_timings_s, verbose=True)
+
+        if should_compute("POWER_WASSERSTEIN"):
+            t_wasserstein = time.perf_counter()
+            wd_arr = get_wd_freq_arr(
+                power_da_truth.data,
+                power_da_ae.data,
+                freqs,
+                sample=sampling['power_wasserstein_sample'],
+            )
+            metrics_dict["power_wasserstein"] = float(np.mean(wd_arr))
+            if "POWER_WASSERSTEIN" in data_dict_metrics and wd_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile Wasserstein values
+                data["POWER_WASSERSTEIN"] = get_best_worst_random(wd_arr, ssp_truth, ssp_ae, "POWER_WASSERSTEIN", best_is_min=True)
+            log_metric_timing("POWER_WASSERSTEIN", t_wasserstein, metric_timings_s, verbose=True)
+            del wd_arr
+
+        del power_da_truth, power_da_ae
+        gc.collect()
+        log_metric_timing("POWER_SPECTRUM_METRICS", t_power, metric_timings_s, verbose=True)
 
     # SSIM
-    if verbose:
-        print("  Computing SSIM...")
-    ssim_arr = compute_ssim(ssp_truth, ssp_ae, sample=10)
-    metrics_dict["ssim"] = float(np.mean(ssim_arr))
-    if "SSIM" in data_dict_metrics and ssim_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile SSIM values
-        data["SSIM"] = get_best_worst_random(ssim_arr, ssp_truth, ssp_ae, "SSIM", best_is_min=False)
-    del ssim_arr
-    gc.collect()
+    if should_compute("SSIM"):
+        t_ssim = time.perf_counter()
+        if verbose:
+            print("  Computing SSIM...")
+        ssim_arr = compute_ssim(ssp_truth, ssp_ae, sample=sampling['ssim_sample'])
+        metrics_dict["ssim"] = float(np.mean(ssim_arr))
+        if "SSIM" in data_dict_metrics and ssim_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile SSIM values
+            data["SSIM"] = get_best_worst_random(ssim_arr, ssp_truth, ssp_ae, "SSIM", best_is_min=False)
+        del ssim_arr
+        gc.collect()
+        log_metric_timing("SSIM", t_ssim, metric_timings_s, verbose=True)
 
     # MS-SSIM
-    if verbose:
-        print("  Computing MS-SSIM...")
-    mssim_arr = compute_ms_ssim(ssp_truth, ssp_ae, sample=10)
-    metrics_dict["ms_ssim"] = float(np.mean(mssim_arr))
-    if "MS_SSIM" in data_dict_metrics and mssim_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile MS-SSIM values
-        data["MS_SSIM"] = get_best_worst_random(mssim_arr, ssp_truth, ssp_ae, "MS_SSIM", best_is_min=False)
-    del mssim_arr
-    gc.collect()
-
-    # # # NSR (effective resolution)
-    # # if verbose:
-    # #     print("\n" + "="*70)
-    # #     print("  Computing NSR (spectral resolution)...")
-    # #     print("="*70)
-    # #     log_memory_checkpoint("Before NSR computation (original)", verbose=True)
-    # #     log_data_shapes({
-    # #         'ssp_truth_da': ssp_truth_da,
-    # #         'ssp_ae_da': ssp_ae_da
-    # #     }, "NSR Input Data Shapes (Original)")
-    
-    # # try:
-    # #     for idx_t, t_r in enumerate([0.1,0.5,0.9], 1):
-    # #         if verbose:
-    # #             print(f"  [{idx_t}/3] Computing NSR with target_ratio={t_r}...")
-    # #             log_memory_checkpoint(f"Before nsr_depth (t_r={t_r})", verbose=True)
-            
-    # #         nsr_depth = compute_nsr_along_depth(ssp_truth_da, ssp_ae_da, target_ratio=t_r)
-            
-    # #         if verbose:
-    # #             log_memory_checkpoint(f"After nsr_depth (t_r={t_r})", verbose=True)
-    # #             print(f"    nsr_depth result: {nsr_depth}")
-            
-    # #         nsr_map = compute_nsr_spatial_map(ssp_truth_da, ssp_ae_da, target_ratio=t_r)
-            
-    # #         if verbose:
-    # #             log_memory_checkpoint(f"After nsr_map (t_r={t_r})", verbose=True)
-    # #             print(f"    nsr_map result: {nsr_map}")
-            
-    # #         metrics_dict[f"nsr_depth_resolution_{int(t_r*100)}"] = float(nsr_depth["resolution"])
-    # #         metrics_dict[f"nsr_spatial_resolution_{int(t_r*100)}"] = float(nsr_map["resolution"])
-            
-    # #         if verbose:
-    # #             print(f"    ✓ Completed NSR for t_r={t_r}")
-    # # except Exception as e:
-    # #     if verbose:
-    # #         print(f"  ✗ Error during NSR computation: {e}")
-    # #         log_memory_checkpoint("After NSR error (original)", verbose=True)
-    # #         import traceback
-    # #         traceback.print_exc()
-    # #     raise
-    
-    # # if verbose:
-    # #     log_memory_checkpoint("After all NSR computations (original)", verbose=True)
-    # #     gc.collect()
-    # #     log_memory_checkpoint("After garbage collection (original)", verbose=True)
+    if should_compute("MS_SSIM"):
+        t_msssim = time.perf_counter()
+        if verbose:
+            print("  Computing MS-SSIM...")
+        mssim_arr = compute_ms_ssim(ssp_truth, ssp_ae, sample=sampling['msssim_sample'])
+        metrics_dict["ms_ssim"] = float(np.mean(mssim_arr))
+        if "MS_SSIM" in data_dict_metrics and mssim_arr.shape[0] == ssp_truth.shape[0]:  # Only compute best/worst if we have per-profile MS-SSIM values
+            data["MS_SSIM"] = get_best_worst_random(mssim_arr, ssp_truth, ssp_ae, "MS_SSIM", best_is_min=False)
+        del mssim_arr
+        gc.collect()
+        log_metric_timing("MS_SSIM", t_msssim, metric_timings_s, verbose=True)
 
 
     # RMSE of pca reconstruction
-    ae_pca = pca.transform(ssp_ae.transpose(0, 2, 3, 1).reshape(-1, ssp_ae.shape[1]))
-    for n_components in [3,6]:
-        ae_pca_n = ae_pca[:, :n_components]
-        ssp_ae_pca_recon = (
-            ae_pca_n @ pca.components_[:n_components, :] + pca.mean_
-        )
+    if should_compute("RMSE_PCA"):
+        if pca is None:
+            raise ValueError("metrics_to_compute contains RMSE_PCA but pca is None")
+        t_pca = time.perf_counter()
+        ae_pca = pca.transform(ssp_ae.transpose(0, 2, 3, 1).reshape(-1, ssp_ae.shape[1]))
+        for n_components in [3,6]:
+            ae_pca_n = ae_pca[:, :n_components]
+            ssp_ae_pca_recon = (
+                ae_pca_n @ pca.components_[:n_components, :] + pca.mean_
+            )
 
-        ssp_ae_pca_recon = ssp_ae_pca_recon.reshape(ssp_ae.shape[0], ssp_ae.shape[2], ssp_ae.shape[3], ssp_ae.shape[1]).transpose(0, 3, 1, 2)
-        rmse_pca = float(np.sqrt(((ssp_ae_pca_recon - ssp_truth) ** 2).mean()))
-        metrics_dict[f"rmse_pca_{n_components}_components"] = rmse_pca
-        if f"RMSE_PCA" in data_dict_metrics:
-            metric_arr = np.sqrt(((ssp_ae_pca_recon - ssp_truth) ** 2).mean(axis=1))
-            data[f"RMSE_PCA"] = get_best_worst_random(metric_arr, ssp_truth, ssp_ae, f"RMSE_PCA_{n_components}_COMPONENTS", best_is_min=True)
+            ssp_ae_pca_recon = ssp_ae_pca_recon.reshape(ssp_ae.shape[0], ssp_ae.shape[2], ssp_ae.shape[3], ssp_ae.shape[1]).transpose(0, 3, 1, 2)
+            rmse_pca = float(np.sqrt(((ssp_ae_pca_recon - ssp_truth) ** 2).mean()))
+            metrics_dict[f"rmse_pca_{n_components}_components"] = rmse_pca
+            if "RMSE_PCA" in data_dict_metrics:
+                metric_arr = np.sqrt(((ssp_ae_pca_recon - ssp_truth) ** 2).mean(axis=1))
+                data["RMSE_PCA"] = get_best_worst_random(metric_arr, ssp_truth, ssp_ae, f"RMSE_PCA_{n_components}_COMPONENTS", best_is_min=True)
+        log_metric_timing("RMSE_PCA", t_pca, metric_timings_s, verbose=True)
+
+
+    # NSR (effective resolution)
+    if should_compute("NSR"):
+        t_nsr = time.perf_counter()
+
+        time_sample = max(1, int(sampling['nsr_time_sample']))
+
+        if verbose:
+            print("\n" + "="*70)
+            print("  Computing NSR (spectral resolution)...")
+            print("="*70)
+
+        try:
+            target_ratios = [0.01, 0.1, 0.5]
+            sampled_truth = ssp_truth_da.isel(time=slice(None, None, time_sample))
+            sampled_ae = ssp_ae_da.isel(time=slice(None, None, time_sample))
+
+            t_nsr_depth = time.perf_counter()
+
+            nsr_depth = compute_nsr_along_depth(
+                sampled_truth,
+                sampled_ae,
+                target_ratio=target_ratios[0],
+                target_ratios=target_ratios,
+            )
+
+            log_metric_timing("NSR_DEPTH", t_nsr_depth, metric_timings_s, verbose=True)
+
+            t_nsr_map = time.perf_counter()
+            nsr_map = compute_nsr_spatial_map(
+                ssp_truth_da,   ## Note: Using full dataset for spatial map, mean over time is done inside the function
+                ssp_ae_da,
+                target_ratio=target_ratios[0],
+                target_ratios=target_ratios,
+            )
+            log_metric_timing("NSR_MAP", t_nsr_map, metric_timings_s, verbose=True)
+
+
+            # Additional spatial-resolution stats at specific depths, computed over all time slices.
+            t_depth_time_stats = time.perf_counter()
+            depth_time_stats = compute_nsr_spatial_resolution_stats_by_depth_time(
+                sampled_truth,
+                sampled_ae,
+                depth_indices=[0, 40],
+                target_ratio=target_ratios[0],
+                target_ratios=target_ratios,
+                n_jobs=-1,
+            )
+
+            log_metric_timing("NSR_DEPTH_TIME_STATS", t_depth_time_stats, metric_timings_s, verbose=True)
+
+            depth_by_target = nsr_depth.get("resolutions_by_target", {})
+            spatial_by_target = nsr_map.get("resolutions_by_target", {})
+
+            del sampled_truth, sampled_ae
+            gc.collect()
+
+            for idx_t, t_r in enumerate(target_ratios, 1):
+                ratio_key = f"{t_r:g}"
+                if ratio_key in depth_by_target:
+                    metrics_dict[f"nsr_depth_resolution_{int(t_r*100)}"] = float(depth_by_target[ratio_key]["resolution"])
+                else:
+                    metrics_dict[f"nsr_depth_resolution_{int(t_r*100)}"] = float(nsr_depth["resolution"])
+
+                if ratio_key in spatial_by_target:
+                    metrics_dict[f"nsr_spatial_resolution_{int(t_r*100)}"] = float(spatial_by_target[ratio_key]["resolution"])
+                else:
+                    metrics_dict[f"nsr_spatial_resolution_{int(t_r*100)}"] = float(nsr_map["resolution"])
+
+                for depth_idx in [0, 40]:
+                    depth_stats = (
+                        depth_time_stats
+                        .get("stats_by_depth", {})
+                        .get(str(depth_idx), {})
+                        .get("resolutions_by_target", {})
+                        .get(ratio_key, {})
+                    )
+                    metrics_dict[
+                        f"nsr_spatial_depth{depth_idx}_time_mean_resolution_{int(t_r*100)}"
+                    ] = float(depth_stats.get("mean", np.nan))
+                    metrics_dict[
+                        f"nsr_spatial_depth{depth_idx}_time_median_resolution_{int(t_r*100)}"
+                    ] = float(depth_stats.get("median", np.nan))
+                    metrics_dict[
+                        f"nsr_spatial_depth{depth_idx}_time_std_resolution_{int(t_r*100)}"
+                    ] = float(depth_stats.get("std", np.nan))
+                    metrics_dict[
+                        f"nsr_spatial_depth{depth_idx}_time_iqr_resolution_{int(t_r*100)}"
+                    ] = float(depth_stats.get("iqr", np.nan))
+
+                if verbose:
+                    print(f"    ✓ Completed NSR for t_r={t_r}")
+            log_metric_timing("NSR", t_nsr, metric_timings_s, verbose=True)
+        except Exception as e:
+            if verbose:
+                print(f"  ✗ Error during NSR computation: {e}")
+                import traceback
+                traceback.print_exc()
+            raise
 
 
     
@@ -1081,6 +1268,8 @@ def compute_metrics(
     
     if verbose:
         print(f"\n✓ Computed {len(metrics_dict)} metric values")
+
+    metrics_dict["metric_timings_s"] = metric_timings_s
     
     return metrics_dict , data
 
@@ -1095,6 +1284,37 @@ def compute_bpe(out_net, num_pixels) -> float:
     ).item()
 
 
+def get_sampling_config_for_season(season: str) -> Dict[str, int]:
+    """Return metric sampling parameters tuned per season runtime budget."""
+    season_key = str(season).lower()
+
+    # Baseline profile keeps similar behavior to previous implementation.
+    cfg = {
+        'extremum_pos_sample': 10,
+        'dtw_sample': 10,
+        'wasserstein_sample': 1,
+        'power_wasserstein_sample': 1,
+        'ssim_sample': 10,
+        'msssim_sample': 10,
+        # Lower value means denser NSR sampling over time.
+        'nsr_time_sample': 10,
+    }
+
+    # Aggressive downsampling for heavy metrics in ALL season,
+    # while keeping NSR denser as requested.
+    if season_key == 'all':
+        cfg.update({
+            'extremum_pos_sample': 40,
+            'dtw_sample': 50,
+            'wasserstein_sample': 20,
+            'power_wasserstein_sample': 20,
+            'ssim_sample': 40,
+            'msssim_sample': 60,
+            'nsr_time_sample': 4,
+        })
+    return cfg
+
+
 
 def parse_mlic_config(ckpt_path):
     """
@@ -1107,24 +1327,71 @@ def parse_mlic_config(ckpt_path):
         tuple: (N, M) values or (None, None) if parsing fails
     """
 
-    config_file = list((ckpt_path.parent.parent).rglob("train_*.log")) 
+    config_file = list((ckpt_path.parent.parent).rglob("experiment_config.log"))
     if not config_file:
-        print(f"Warning: train logs not found in {ckpt_path}")
-        return None, None
-    
-    config_file = config_file[0]  # Get the first match if multiple found
+        print(f"Warning: experiment_config.log not found in {ckpt_path}")
+        return None
+
+    config_file = sorted(config_file)[0]
 
     try:
         with open(config_file, 'r') as f:
             content = f.read()
-        
-        # Extract N and M values from MODEL CONFIGURATION section
-        N, M = None, None
-        
-        lines = content.split('\n')
 
-        cfg = eval((lines[1].strip().split("INFO: ")[-1]).replace("<class 'torch.nn.modules.activation.","nn.").replace("'>",""))
+        def _extract_section(section_name: str) -> str:
+            header_re = re.compile(
+                rf"{re.escape(section_name)}\n-+\n",
+                flags=re.MULTILINE,
+            )
+            start_match = header_re.search(content)
+            if not start_match:
+                return ""
 
+            next_header_re = re.compile(r"\n[A-Z][A-Z _]+:\n-+\n", flags=re.MULTILINE)
+            next_match = next_header_re.search(content, start_match.end())
+            end_idx = next_match.start() if next_match else len(content)
+            return content[start_match.end():end_idx].strip()
+
+        def _parse_key_value_blocks(block: str) -> Dict[str, str]:
+            if not block:
+                return {}
+            entry_re = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*", flags=re.MULTILINE)
+            matches = list(entry_re.finditer(block))
+            parsed = {}
+            for i, match in enumerate(matches):
+                key = match.group(1)
+                value_start = match.end()
+                value_end = matches[i + 1].start() if i + 1 < len(matches) else len(block)
+                parsed[key] = block[value_start:value_end].strip()
+            return parsed
+
+        def _safe_eval_model_value(raw_value: str):
+            value = raw_value.replace("<class 'torch.nn.modules.activation.", "nn.").replace("'>", "")
+            try:
+                return eval(value, {"__builtins__": {}}, {"nn": nn, "np": np, "True": True, "False": False, "None": None})
+            except Exception:
+                return raw_value
+
+        model_block = _extract_section("MODEL CONFIGURATION:")
+        model_cfg_raw = _parse_key_value_blocks(model_block)
+        cfg = {k: _safe_eval_model_value(v) for k, v in model_cfg_raw.items()}
+
+        dm_block = _extract_section("DATAMODULE PARAMETERS:")
+        dm_cfg_all = _parse_key_value_blocks(dm_block)
+        if dm_cfg_all and "dl_kw" in dm_cfg_all and "test_shape" in dm_cfg_all:
+            dm_keys = list(dm_cfg_all.keys())
+            start_idx = dm_keys.index("dl_kw")
+            end_idx = dm_keys.index("test_shape")
+            selected_dm_keys = dm_keys[start_idx:end_idx + 1]
+            datamodule_info = {k: dm_cfg_all[k] for k in selected_dm_keys}
+        else:
+            datamodule_info = {}
+
+        loss_block = _extract_section("LOSS FUNCTION PARAMETERS:")
+        loss_function_parameters = _parse_key_value_blocks(loss_block)
+
+        cfg["datamodule_info"] = datamodule_info
+        cfg["loss_function_parameters"] = loss_function_parameters
 
         return cfg
         
@@ -1155,11 +1422,305 @@ def find_checkpoints(checkpoint_paths: List[str]) -> List[Path]:
             checkpoints.append(path)
         else:
             # Search for .tar files in directory
-            #found = sorted(path.rglob("*f1*.tar"))  #+sorted(path.rglob("*rmse*.tar")) +  
-            found = sorted(path.rglob("*.tar"))
+            found = sorted(path.rglob("*rmse*.tar")) + sorted(path.rglob("*f1*.tar")) +  sorted(path.rglob("*t_loss*.tar"))
+            #found = sorted(path.rglob("*.tar"))
             checkpoints.extend(found)
     
     return sorted(list(set(checkpoints)))
+
+
+def _load_profile_entries(profile_pickle_path: str) -> List[dict]:
+    """Load selected profile entries from pickle file."""
+    with open(profile_pickle_path, "rb") as f:
+        obj = pickle.load(f)
+
+    if isinstance(obj, dict):
+        return list(obj.values())
+    if isinstance(obj, list):
+        return obj
+    raise ValueError(f"Unsupported profile pickle type: {type(obj)}")
+
+
+def _resolve_profile_index_in_season(entry: dict, seasonal_da: xr.DataArray) -> Optional[Tuple[int, int, int]]:
+    """Resolve profile index (time, lat, lon) in the given seasonal DataArray."""
+    if "time" in entry and "lat" in entry and "lon" in entry:
+        try:
+            t_val = np.datetime64(entry["time"])
+            t_matches = np.where(seasonal_da.time.values == t_val)[0]
+            if len(t_matches) == 0:
+                return None
+            t_idx = int(t_matches[0])
+
+            lat_vals = seasonal_da.lat.values.astype(float)
+            lon_vals = seasonal_da.lon.values.astype(float)
+            lat_idx = int(np.argmin(np.abs(lat_vals - float(entry["lat"]))))
+            lon_idx = int(np.argmin(np.abs(lon_vals - float(entry["lon"]))))
+            return t_idx, lat_idx, lon_idx
+        except Exception:
+            pass
+
+    t_idx = entry.get("t_idx", None)
+    lat_idx = entry.get("lat_idx", None)
+    lon_idx = entry.get("lon_idx", None)
+    if t_idx is None or lat_idx is None or lon_idx is None:
+        return None
+
+    t_idx = int(t_idx)
+    lat_idx = int(lat_idx)
+    lon_idx = int(lon_idx)
+    if not (0 <= t_idx < seasonal_da.sizes["time"]):
+        return None
+    if not (0 <= lat_idx < seasonal_da.sizes["lat"]):
+        return None
+    if not (0 <= lon_idx < seasonal_da.sizes["lon"]):
+        return None
+    return t_idx, lat_idx, lon_idx
+
+
+def _lon_distance_meters(lat_deg: float, lon1_deg: float, lon2_deg: float) -> float:
+    """Compute distance in meters between two longitudes at a given latitude."""
+    earth_radius_m = 6_371_000.0
+    return float(earth_radius_m * np.cos(np.radians(lat_deg)) * np.abs(np.radians(lon2_deg - lon1_deg)))
+
+
+def _create_ramgeo_config_text(
+    title: str,
+    ssp_profile_1d: np.ndarray,
+    depth_array: np.ndarray,
+    freq_hz: float,
+    source_depth_m: float,
+    receiver_depth_m: float,
+    rmax_m: float,
+    dr_m: float,
+    dz_m: float,
+    zmax_m: float = 2000.0,
+    ndr: int = 1,
+    ndz: int = 1,
+    zmplt_m: float = 1000.0,
+    c0: float = 1500.0,
+    n_pade: int = 8,
+    ns: int = 1,
+    rs: float = 0.0,
+) -> str:
+    """Create RAMGEO config text for a single SSP profile."""
+    config = f"""{title}
+{freq_hz} {source_depth_m} {receiver_depth_m}\tFrequency (Hz), source depth (m), receiver depth(s) (m)
+{rmax_m}\t{dr_m} {ndr}\tMax range (m), range step dr (m) range decimation
+{zmax_m}\t{dz_m} {ndz} {zmplt_m}\tMax depth (m), depth step dz (m), depth decimation, depth for plotting (m)
+{c0}\t{n_pade} {ns} {rs}\tReference sound speed (m/s) Number of Pade terms, number of stability constraints in Pade approximation, Range of starter
+0.0\t{2*zmax_m}\tbathymetry data r,z in [m, m]
+{rmax_m}\t{2*zmax_m}
+-1\t-1
+"""
+
+    for i, (z, c) in enumerate(zip(depth_array, ssp_profile_1d)):
+        if i == 0:
+            config += f"{z:.2f}\t{c:.2f}\tSSP profile (depth, sound speed)\n"
+        else:
+            config += f"{z:.2f}\t{c:.2f}\n"
+
+    config += """-1\t-1
+0.0\t1800.0\tcompressive sound speed profile in substrate {z,cbp} [m, m/s]
+100.0   1800.0
+-1\t-1
+0.0\t1.7\tdensity profile in substrate {z,rho} [m, g/cm³]
+100.0   1.7
+-1\t-1
+0.0\t0.4\tcompressive attenuation profile  {z,attnp} [m, dB/lambda]
+10.0    0.4
+100.0\t10.0    buffer layer with totam attenuation
+-1\t-1
+"""
+    return config
+
+
+def _read_fortran_record_py(file_obj):
+    """Read a single Fortran unformatted sequential record."""
+    len_bytes = file_obj.read(4)
+    if len(len_bytes) < 4:
+        return None
+    reclen = struct.unpack("i", len_bytes)[0]
+    data = file_obj.read(reclen)
+    if len(data) < reclen:
+        return None
+    trailer = file_obj.read(4)
+    if len(trailer) < 4:
+        return None
+    return data
+
+
+def _read_tl_grid_from_file(tl_grid_path: Path) -> np.ndarray:
+    """Read tl.grid to depth x range matrix and drop first depth row as in diff script."""
+    with open(tl_grid_path, "rb") as f:
+        header = _read_fortran_record_py(f)
+        if header is None:
+            raise RuntimeError(f"Empty tl.grid file: {tl_grid_path}")
+        lz = np.frombuffer(header, dtype=np.int32, count=1)[0]
+
+        grid_cols = []
+        while True:
+            record = _read_fortran_record_py(f)
+            if record is None:
+                break
+            vals = np.frombuffer(record, dtype=np.float32, count=lz).copy()
+            grid_cols.append(vals)
+
+    if not grid_cols:
+        raise RuntimeError(f"No TL grid data in file: {tl_grid_path}")
+
+    grid = np.stack(grid_cols, axis=1)
+    if grid.shape[0] > 1:
+        grid = grid[1:, :]
+    return grid
+
+
+def _compute_tl_grid_mae_ssim(rec_tl_grid: np.ndarray, truth_tl_grid: np.ndarray) -> Tuple[float, float]:
+    """Compute tl_grid_mae and tl_grid_ssim exactly as in compute_ram_differences.py."""
+    if rec_tl_grid.shape != truth_tl_grid.shape:
+        raise ValueError(f"TL grid shape mismatch: {rec_tl_grid.shape} vs {truth_tl_grid.shape}")
+
+    tl_grid_mae = float(np.mean(np.abs(rec_tl_grid - truth_tl_grid)))
+
+    rec_norm = (rec_tl_grid - np.min(rec_tl_grid)) / (np.max(rec_tl_grid) - np.min(rec_tl_grid) + 1e-8)
+    truth_norm = (truth_tl_grid - np.min(truth_tl_grid)) / (np.max(truth_tl_grid) - np.min(truth_tl_grid) + 1e-8)
+    tl_grid_ssim = float(skimage_ssim(truth_norm, rec_norm, data_range=1.0, multichannel=False))
+    return tl_grid_mae, tl_grid_ssim
+
+
+def _run_ramgeo_single_profile(
+    ssp_profile_1d: np.ndarray,
+    depth_array: np.ndarray,
+    lat_val: float,
+    lon_vals: np.ndarray,
+    ramgeo_exe: str,
+    verbose: bool,
+    freq_hz: float = 100.0,
+    source_depth_m: float = 200.0,
+    receiver_depth_m: float = 300.0,
+    rmax_m: float = 10000.0,
+    c0: float = 1500.0,
+) -> np.ndarray:
+    """Run RAMGEO for one SSP profile and return TL grid."""
+    if len(lon_vals) < 2:
+        raise ValueError("Need at least two longitude points to estimate r_update.")
+
+    lambda_m = c0 / freq_hz
+    dr_m = 0.99 * 0.5 * lambda_m
+    dz_m = 0.99 * 0.1 * lambda_m
+
+    # Keep the same geometry logic used in generate_diff.py.
+    _ = _lon_distance_meters(float(lat_val), float(lon_vals[0]), float(lon_vals[1]))
+
+    with tempfile.TemporaryDirectory(prefix="ramgeo_eval_") as tmp_dir:
+        tmp_dir = Path(tmp_dir)
+        run_dir = tmp_dir / "run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        cfg_text = _create_ramgeo_config_text(
+            title="RAMGEO_METRIC_EVAL",
+            ssp_profile_1d=ssp_profile_1d,
+            depth_array=depth_array,
+            freq_hz=freq_hz,
+            source_depth_m=source_depth_m,
+            receiver_depth_m=receiver_depth_m,
+            rmax_m=rmax_m,
+            dr_m=dr_m,
+            dz_m=dz_m,
+        )
+
+        cfg_path = tmp_dir / "ramgeo_eval.in"
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(cfg_text)
+
+        cmd = [
+            ramgeo_exe,
+            f"--input={cfg_path}",
+            f"--output-dir={run_dir}",
+            *([] if verbose else ["--quiet"]),
+        ]
+        subprocess.run(cmd, check=True)
+
+        tl_grid_path = run_dir / "tl.grid"
+        if not tl_grid_path.exists():
+            raise FileNotFoundError(f"Missing tl.grid in RAMGEO output: {tl_grid_path}")
+        return _read_tl_grid_from_file(tl_grid_path)
+
+
+def _precompute_truth_tl_grids_for_season(
+    ssp_truth_seasonal: xr.DataArray,
+    depth_array: np.ndarray,
+    profile_entries: List[dict],
+    ramgeo_exe: str,
+    verbose: bool,
+    freq_hz: float = 100.0,
+) -> Dict[Tuple[int, int, int], np.ndarray]:
+    """Run truth RAMGEO once per selected profile and cache TL grids."""
+    truth_cache: Dict[Tuple[int, int, int], np.ndarray] = {}
+
+    for entry in profile_entries:
+        idx = _resolve_profile_index_in_season(entry, ssp_truth_seasonal)
+        if idx is None or idx in truth_cache:
+            continue
+
+        t_idx, lat_idx, lon_idx = idx
+        profile = ssp_truth_seasonal.isel(time=t_idx, lat=lat_idx, lon=lon_idx).values.astype(np.float32)
+        lat_val = float(ssp_truth_seasonal.lat.values[lat_idx])
+        lon_vals = ssp_truth_seasonal.lon.values.astype(float)
+
+        truth_cache[idx] = _run_ramgeo_single_profile(
+            ssp_profile_1d=profile,
+            depth_array=depth_array,
+            lat_val=lat_val,
+            lon_vals=lon_vals,
+            ramgeo_exe=ramgeo_exe,
+            verbose=verbose,
+            freq_hz=freq_hz,
+        )
+
+    return truth_cache
+
+
+def _compute_ramgeo_metrics(
+    ssp_ae: xr.DataArray,
+    depth_array: np.ndarray,
+    profile_entries: List[dict],
+    truth_cache: Dict[Tuple[int, int, int], np.ndarray],
+    ramgeo_exe: str,
+    verbose: bool,
+    freq_hz: float = 100.0,
+) -> Tuple[float, float, int]:
+    """Run RAMGEO for reconstructed SSP and compare against cached truth TL grids."""
+    mae_vals: List[float] = []
+    ssim_vals: List[float] = []
+
+    for entry in profile_entries:
+        idx = _resolve_profile_index_in_season(entry, ssp_ae)
+        if idx is None or idx not in truth_cache:
+            continue
+
+        t_idx, lat_idx, lon_idx = idx
+        profile = ssp_ae.isel(time=t_idx, lat=lat_idx, lon=lon_idx).values.astype(np.float32)
+        lat_val = float(ssp_ae.lat.values[lat_idx])
+        lon_vals = ssp_ae.lon.values.astype(float)
+
+        rec_tl_grid = _run_ramgeo_single_profile(
+            ssp_profile_1d=profile,
+            depth_array=depth_array,
+            lat_val=lat_val,
+            lon_vals=lon_vals,
+            ramgeo_exe=ramgeo_exe,
+            verbose=verbose,
+            freq_hz=freq_hz,
+        )
+
+        mae_val, ssim_val = _compute_tl_grid_mae_ssim(rec_tl_grid, truth_cache[idx])
+        mae_vals.append(mae_val)
+        ssim_vals.append(ssim_val)
+
+    if not mae_vals:
+        return float("nan"), float("nan"), 0
+
+    return float(np.mean(mae_vals)), float(np.mean(ssim_vals)), len(mae_vals)
 
 
 def process_model_in_batches(model, data_tensor, batch_size=4, dim=0, device='cuda'):
@@ -1219,7 +1780,7 @@ def load_model_from_checkpoint(checkpoint_path: Path, device: str = 'cuda', dm=N
         # MLIC format
         cfg = parse_mlic_config(Path(checkpoint_path))
         model = MLICPlusPlus(config=Config(cfg))
-        model.load_state_dict(checkpoint['state_dict'])
+        model.load_state_dict(checkpoint['state_dict'], strict=False)
         if model.in_channels == 3:
             model_type = "RGB_MLIC"
         else:
@@ -1236,7 +1797,7 @@ def load_model_from_checkpoint(checkpoint_path: Path, device: str = 'cuda', dm=N
     model = model.to(device)
     model.eval()
     
-    return model, checkpoint, model_type
+    return model, checkpoint, model_type, cfg
 
 
 def run_rgb_mlic(model, ssp_tensor):
@@ -1279,11 +1840,18 @@ def compute_metrics_for_checkpoints(
     checkpoint_paths: List[str],
     dm_path: str,
     data_dict_metrics: List[str],
+    metrics_to_compute: Optional[List[str]] = None,
+    metrics_grad_to_compute: Optional[List[str]] = None,
+    batch_size: int = 16,
+    max_depth: Optional[int] = None,
+    filter_output: bool = True,
     time_sample: int = 10,
     compute_pca: bool = False,
     norm_stats: str = "train",
     verbose: bool = False,
     unique_name: str = "",
+    ramgeo_profile_number: int = 20,
+    ramgeo_exe: str = "/Odyssey/private/o23gauvr/code/RAMGEO2025/RAMGEO2025/ramgeo",
 ) -> Dict[str, Dict]:
     """
     Compute metrics for one or more model checkpoints.
@@ -1296,6 +1864,10 @@ def compute_metrics_for_checkpoints(
         Path to datamodule pickle file
     data_dict_metrics : List[str]
         List of metrics to compute
+    metrics_to_compute : Optional[List[str]], optional
+        Aggregate metrics to compute for SSP data. If None, compute all.
+    metrics_grad_to_compute : Optional[List[str]], optional
+        Aggregate metrics to compute for gradient data. If None, compute all.
     compute_pca : bool, optional
         If True, compute PCA-based metrics
     verbose : bool, optional
@@ -1331,6 +1903,9 @@ def compute_metrics_for_checkpoints(
     ssp_truth = ssp_truth_da.values.astype(np.float32)
 
     depth_array = ssp_truth_da.z.values
+    assert np.all(np.isclose(np.diff(depth_array),np.diff(depth_array)[0])) #depth array should be uniform
+
+
     dm_test_norm = ssp_truth_da.attrs['norm_stats']
     dm_train_norm = dm.train_ds.input.attrs['norm_stats']
 
@@ -1343,6 +1918,7 @@ def compute_metrics_for_checkpoints(
     ssp_truth_metrics_da = ssp_truth_da.isel(lat=crop_idx, lon=crop_idx)
 
     ssp_truth_metrics_grad_da = ssp_truth_metrics_da.differentiate("z")
+
 
     pca_train = PCA(n_components=15, svd_solver="randomized", random_state=42)
     train_truth_da = dm.train_ds.input
@@ -1362,8 +1938,44 @@ def compute_metrics_for_checkpoints(
         print(f"Test data shape: {ssp_truth_da.shape}")
     
     # Define seasons for seasonal filtering
-    seasons = ['all'] #, 'spring', 'summer' 'autumn', 'winter'
-    
+        seasons = ['all'] #, ,'spring', 'summer', 'autumn', 'winter'
+
+    # Precompute TRUTH RAMGEO TL grids once per season and frequency.
+    ramgeo_freqs_hz = [10, 100, 500, 1000]
+    profile_entries_by_season: Dict[str, Optional[List[dict]]] = {s: None for s in seasons}
+    truth_tl_cache_by_season_freq: Dict[str, Dict[int, Dict[Tuple[int, int, int], np.ndarray]]] = {
+        s: {freq: {} for freq in ramgeo_freqs_hz} for s in seasons
+    }
+
+    for season in seasons:
+
+        try:
+            profile_entries = _load_profile_entries(f"/Odyssey/private/o23gauvr/code/FASCINATION/pickle/ssp_cluster_{ramgeo_profile_number}_{season}.pkl")
+            profile_entries_by_season[season] = profile_entries
+            season_indices = get_seasonal_time_indices(ssp_truth_metrics_da.time, season)
+            if len(season_indices) > 0:
+                ssp_truth_seasonal = ssp_truth_metrics_da.isel(time=season_indices)
+                for freq_hz in ramgeo_freqs_hz:
+                    truth_tl_cache_by_season_freq[season][freq_hz] = _precompute_truth_tl_grids_for_season(
+                        ssp_truth_seasonal=ssp_truth_seasonal,
+                        depth_array=depth_array,
+                        profile_entries=profile_entries,
+                        ramgeo_exe=ramgeo_exe,
+                        verbose=False,
+                        freq_hz=float(freq_hz),
+                    )
+            if verbose:
+                per_freq_counts = {
+                    freq: len(truth_tl_cache_by_season_freq[season].get(freq, {}))
+                    for freq in ramgeo_freqs_hz
+                }
+                print(f"[RAMGEO] Precomputed TRUTH TL grids for season '{season}': {per_freq_counts}")
+        except Exception as e:
+            profile_entries_by_season[season] = None
+            truth_tl_cache_by_season_freq[season] = {freq: {} for freq in ramgeo_freqs_hz}
+            if verbose:
+                print(f"[RAMGEO] Skipping season '{season}' precompute: {e}")
+
     # Compute metrics for each checkpoint
     results = {}
     data_dict = {}
@@ -1379,7 +1991,10 @@ def compute_metrics_for_checkpoints(
         
         try:
             # Load model
-            model, state, model_type = load_model_from_checkpoint(str(checkpoint_path), device=str(device), dm=dm, batch=batch_tens)
+            model, state, model_type, cfg = load_model_from_checkpoint(str(checkpoint_path), device=str(device), dm=dm, batch=batch_tens)
+
+
+                
             
             if verbose:
                 print(f"✓ Loaded {model_type} model")
@@ -1406,6 +2021,21 @@ def compute_metrics_for_checkpoints(
             
 
             ssp_truth_norm = norm_ssp_arr_3D(ssp_truth_da, model_norm_stats).values.astype(np.float32)
+
+            if cfg['datamodule_info'].get('uniform_z',True) == "False":
+
+                non_uniform_z = cfg['datamodule_info'].get('depth_array', None)
+                non_uniform_z = np.fromstring(non_uniform_z.replace('\n', ' ').strip('[]'), sep=' ')
+                ssp_truth_norm = norm_ssp_arr_3D(ssp_truth_da.interp(z=non_uniform_z, method="cubic", kwargs={"fill_value": "extrapolate"}), model_norm_stats).values.astype(np.float32)
+
+                #np.sqrt(np.mean((ssp_truth_da.interp(z=non_uniform_z, method="cubic",kwargs={"fill_value": "extrapolate"}).interp(z=depth_array).values.astype(np.float32) - ssp_truth_da.values.astype(np.float32))**2))
+                #np.float32(0.0031460903)
+
+            else: 
+                non_uniform_z = None
+                ssp_truth_norm = norm_ssp_arr_3D(ssp_truth_da, model_norm_stats).values.astype(np.float32)
+
+
             ssp_tensor = torch.from_numpy(ssp_truth_norm).to(device)
             original_size_bits = ssp_truth_norm.nbytes * 8
 
@@ -1420,13 +2050,29 @@ def compute_metrics_for_checkpoints(
                 elif model_type == "MLIC":
                     # output = model.compress(ssp_tensor)
                     # ssp_ae_tensor = model.decompress(output['strings'],output['shape'])['x_hat']
-                    rv_batch = model(ssp_tensor)
-                    ssp_ae_tensor = rv_batch['x_hat'].detach()
-                    compressed_size_bits = compute_total_bits(rv_batch)
+                    x_hat_batches = []
+                    compressed_size_bits = 0
+                    batch_size = max(1, int(batch_size))
+                    with torch.inference_mode():
+                        for start in range(0, ssp_tensor.shape[0], batch_size):
+                            end = min(start + batch_size, ssp_tensor.shape[0])
+                            batch = ssp_tensor[start:end]
+                            rv_batch = model(batch)
+                            x_hat_batches.append(rv_batch["x_hat"].detach().cpu())
+                            compressed_size_bits += compute_total_bits(rv_batch)
+                            del batch, rv_batch
+
+                    ssp_ae_tensor = torch.cat(x_hat_batches, dim=0)
+
+
+                    
                     cr = original_size_bits / compressed_size_bits if compressed_size_bits > 0 else float('inf')
+                    string_output = model.compress(ssp_tensor)['strings']
+                    output_bits = sum([bit_size(s) for s in string_output])
+                    effective_cr = original_size_bits / output_bits if output_bits > 0 else float('inf')
                     N, _, H, W = ssp_tensor.size()
                     num_pixels = N * H * W
-                    bpe = compute_bpe(rv_batch, num_pixels=num_pixels)
+                    #bpe = compute_bpe(rv_batch, num_pixels=num_pixels)
                 
                                 
                 elif model_type == "CAE":
@@ -1441,6 +2087,20 @@ def compute_metrics_for_checkpoints(
             ssp_ae = ssp_ae_tensor.cpu().numpy().astype(np.float32)
             ssp_ae = unorm_ssp_arr_3D(ssp_ae, model_norm_stats)
 
+            ##buterworth filtering
+            should_filter_output = ckpt_name in {
+                'best_checkpoint_ecs',
+                'best_checkpoint_loss',
+                'best_checkpoint_rmse',
+            }
+            if not cfg.get('output_low_band_filter_use', False): #and should_filter_output:
+                b, a = butter(N=2, Wn=0.107, btype='low', analog=False)
+                ssp_ae = filtfilt(b, a, ssp_ae, axis=1).astype(ssp_ae.dtype)
+
+                if verbose:
+                    print("✓ Applied Butterworth filter to reconstructed SSP")
+
+
 
             ssp_ae_da = xr.DataArray(
                 ssp_ae,
@@ -1448,6 +2108,10 @@ def compute_metrics_for_checkpoints(
                 dims=ssp_truth_da.dims,
                 name='ssp_reconstructed'
             )
+
+            if cfg['datamodule_info'].get('uniform_z',True) == "False":
+
+                ssp_ae_da = ssp_ae_da.interp(z=depth_array)
             
 
             # Crop and interpolate
@@ -1464,6 +2128,10 @@ def compute_metrics_for_checkpoints(
             for season in tqdm(seasons, desc="Processing seasons", disable=not verbose, leave=False):
                 if verbose:
                     print(f"\n  [Metrics] Processing season: {season.upper()}")
+
+                sampling_config = get_sampling_config_for_season(season)
+                if verbose:
+                    print(f"    Sampling config: {sampling_config}")
                 
                 # Get seasonal indices
                 season_indices = get_seasonal_time_indices(ssp_truth_metrics_da.time, season)
@@ -1481,38 +2149,120 @@ def compute_metrics_for_checkpoints(
                 
                 if verbose:
                     print(f"    SSP shape: {ssp_ae_seasonal.shape}, Samples: {len(season_indices)}")
-                    log_memory_checkpoint(f"Before {season.upper()} SSP metrics computation", verbose=True)
+                    #log_memory_checkpoint(f"Before {season.upper()} SSP metrics computation", verbose=True)
                 
                 # Compute SSP metrics for this season
+                t_metrics_start = time.time()
                 metrics, data = compute_metrics(
-                    ssp_truth_seasonal,
-                    ssp_ae_seasonal,
-                    depth_array,
+                    ssp_truth_seasonal[:, :max_depth] if max_depth is not None else ssp_truth_seasonal,
+                    ssp_ae_seasonal[:, :max_depth] if max_depth is not None else ssp_ae_seasonal,
+                    depth_array[:max_depth] if max_depth is not None else depth_array,
                     data_dict_metrics=data_dict_metrics,
+                    metrics_to_compute=metrics_to_compute,
                     pca=pca_train,
+                    sampling_config=sampling_config,
                     verbose=verbose
                 )
+
+                t_metrics_end = time.time()
+                if verbose:
+                    print(f"    [Metrics] Completed SSP metrics for {season.upper()} in {t_metrics_end - t_metrics_start:.2f} seconds")
+
+                # RAMGEO metrics on SSP only (no gradient): tl_grid_mae and tl_grid_ssim.
+                season_profile_entries = profile_entries_by_season.get(season, None)
+                season_truth_cache_by_freq = truth_tl_cache_by_season_freq.get(season, {})
+                t_ramgeo_start = time.time()
+                has_any_truth_cache = any(len(cache) > 0 for cache in season_truth_cache_by_freq.values())
+                if season_profile_entries is None or not has_any_truth_cache:
+                    for freq_hz in ramgeo_freqs_hz:
+                        metrics[f'tl_grid_mae_freq_{freq_hz}'] = float('nan')
+                        metrics[f'tl_grid_ssim_freq_{freq_hz}'] = float('nan')
+                    metrics['tl_grid_mae'] = float('nan')
+                    metrics['tl_grid_ssim'] = float('nan')
+                    metrics['tl_grid_n_profiles'] = 0
+                    if verbose:
+                        print(f"    [RAMGEO] Skipped for season '{season}' (no profile index file yet)")
+                else:
+                    try:
+                        n_prof_ref = 0
+                        for freq_hz in ramgeo_freqs_hz:
+                            freq_truth_cache = season_truth_cache_by_freq.get(freq_hz, {})
+                            if len(freq_truth_cache) == 0:
+                                metrics[f'tl_grid_mae_freq_{freq_hz}'] = float('nan')
+                                metrics[f'tl_grid_ssim_freq_{freq_hz}'] = float('nan')
+                                continue
+
+                            tl_mae, tl_ssim, n_prof = _compute_ramgeo_metrics(
+                                ssp_ae=ssp_ae_seasonal,
+                                depth_array=depth_array,
+                                profile_entries=season_profile_entries,
+                                truth_cache=freq_truth_cache,
+                                ramgeo_exe=ramgeo_exe,
+                                verbose=False,
+                                freq_hz=float(freq_hz),
+                            )
+                            metrics[f'tl_grid_mae_freq_{freq_hz}'] = tl_mae
+                            metrics[f'tl_grid_ssim_freq_{freq_hz}'] = tl_ssim
+                            n_prof_ref = max(n_prof_ref, n_prof)
+
+                        # Backward-compatible aliases defaulting to 100 Hz.
+                        metrics['tl_grid_mae'] = metrics.get('tl_grid_mae_freq_100', float('nan'))
+                        metrics['tl_grid_ssim'] = metrics.get('tl_grid_ssim_freq_100', float('nan'))
+                        metrics['tl_grid_n_profiles'] = n_prof_ref
+                        if verbose:
+                            print(f"    [RAMGEO] n={n_prof_ref}")
+                            for freq_hz in ramgeo_freqs_hz:
+                                print(
+                                    f"      freq={freq_hz}Hz: "
+                                    f"tl_grid_mae={metrics.get(f'tl_grid_mae_freq_{freq_hz}', float('nan')):.6f}, "
+                                    f"tl_grid_ssim={metrics.get(f'tl_grid_ssim_freq_{freq_hz}', float('nan')):.6f}"
+                                )
+                            t_end = time.time()
+                            print(f"    [RAMGEO] Completed for season '{season}' in {t_end - t_ramgeo_start:.2f} seconds")
+
+                    except Exception as e:
+                        for freq_hz in ramgeo_freqs_hz:
+                            metrics[f'tl_grid_mae_freq_{freq_hz}'] = float('nan')
+                            metrics[f'tl_grid_ssim_freq_{freq_hz}'] = float('nan')
+                        metrics['tl_grid_mae'] = float('nan')
+                        metrics['tl_grid_ssim'] = float('nan')
+                        metrics['tl_grid_n_profiles'] = 0
+                        if verbose:
+                            print(f"    [RAMGEO] Failed for season '{season}': {e}")
+
                 
                 if verbose:
-                    log_memory_checkpoint(f"After {season.upper()} SSP metrics computation", verbose=True)
+                    #log_memory_checkpoint(f"After {season.upper()} SSP metrics computation", verbose=True)
+                    t_end = time.time()
+                    print(f"    [Metrics] Completed SSP metrics for {season.upper()} in {t_end - t_ramgeo_start:.2f} seconds")
                     print(f"    [Metrics] Processing gradient data (shape: {grad_ae_seasonal.shape})...")
                 
-                # # Compute gradient metrics for this season
-                # metrics_grad, data_grad = compute_metrics(
-                #     grad_truth_seasonal,
-                #     grad_ae_seasonal,
-                #     depth_array,
-                #     data_dict_metrics=data_dict_metrics,
-                #     pca=pca_grad_train,
-                #     verbose=verbose
-                # )
-                metrics_grad, data_grad = {}, {}
+                # Compute gradient metrics for this season
+                #metrics_grad, data_grad = {}, {}
+
+                t_grad_start = time.time()
+                metrics_grad, data_grad = compute_metrics(
+                    grad_truth_seasonal[:, :max_depth] if max_depth is not None else grad_truth_seasonal,
+                    grad_ae_seasonal[:, :max_depth] if max_depth is not None else grad_ae_seasonal,
+                    depth_array[:max_depth] if max_depth is not None else depth_array,
+                    data_dict_metrics=data_dict_metrics,
+                    metrics_to_compute=metrics_grad_to_compute,
+                    pca=pca_grad_train,
+                    sampling_config=sampling_config,
+                    verbose=verbose
+                )
+                t_grad_end = time.time()
                 if verbose:
-                    log_memory_checkpoint(f"After {season.upper()} gradient metrics computation", verbose=True)
-                    gc.collect()
-                    log_memory_checkpoint(f"After GC for {season.upper()}", verbose=True)
+                    print(f"    [Metrics] Completed gradient metrics for {season.upper()} in {t_grad_end - t_grad_start:.2f} seconds")
+                
+                gc.collect()
+                #if verbose:
+                    #log_memory_checkpoint(f"After {season.upper()} gradient metrics computation", verbose=True)
+                    
+                    #log_memory_checkpoint(f"After GC for {season.upper()}", verbose=True)
                 
                 # Add metadata
+                metrics['effective_cr'] = effective_cr
                 metrics['model_type'] = model_type
                 metrics['checkpoint_path'] = str(checkpoint_path)
                 metrics['season'] = season
@@ -1543,7 +2293,7 @@ def compute_metrics_for_checkpoints(
                     data_dict[model_name] = {}
                 if cr not in data_dict[model_name]:
                     data_dict[model_name][cr] = {}
-                
+                  
                 data_dict[model_name][cr][season] = {"SSP": data, "GRAD": data_grad}
                 
                 if verbose:
@@ -1551,7 +2301,7 @@ def compute_metrics_for_checkpoints(
             
             # Print summary of seasonal metrics
             if verbose:
-                print(f"\n✓ Successfully computed metrics for all seasons: {ckpt_name}")
+                print(f"\n✓ Successfully computed metrics for all seasons: {model_name}")
                 print(f"\n{'Seasonal Metrics Summary':^70}")
                 print("=" * 70)
                 for season in seasons:
@@ -1667,6 +2417,7 @@ def compute_metrics_for_checkpoints(
                             ssp_ae_seasonal,
                             depth_array,
                             data_dict_metrics=data_dict_metrics,
+                            metrics_to_compute=metrics_to_compute,
                             pca=pca,
                             verbose=verbose
                         )
@@ -1676,6 +2427,7 @@ def compute_metrics_for_checkpoints(
                             grad_ae_seasonal,
                             depth_array,
                             data_dict_metrics=data_dict_metrics,
+                            metrics_to_compute=metrics_grad_to_compute,
                             pca=pca_grad_train,
                             verbose=verbose
                         )
@@ -1742,23 +2494,31 @@ if __name__ == "__main__":
     # print("  )")
     T0,LAT0,LON0 = 0, 50, 50
 
-    #! to compute NSR, at min 300Gb of memory necessary 
+    norm_stats = "test"  # "train" or "test"
+
+
 
     results,data_dict = compute_metrics_for_checkpoints(
-        checkpoint_paths=["/Odyssey/private/o23gauvr/code/MLIC/experiments/mean_std_along_depth_complex_loss"], #, "/Odyssey/private/o23gauvr/code/MLIC/checkpoints/mlicpp_mse_q5_2960000.pth.tar"  #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE" "/Odyssey/private/o23gauvr/code/MLIC/checkpoints/mlicpp_mse_q5_2960000.pth.tar" #"/Odyssey/private/o23gauvr/code/MLIC/experiments/article_long" #, # # # Will rglob for *.tar
+        checkpoint_paths=["/Odyssey/private/o23gauvr/code/MLIC/experiments/test_mean_std_along_depth/"], #,"/Odyssey/private/o23gauvr/code/MLIC/experiments/article_long_new/filtered_z_uniform_dm_alternate_days_classic_loss/fixed_weight_loss_64_96_1.0_CR_10000.0_enatl_natl__mean_std/20260619_180735"], #, "/Odyssey/private/o23gauvr/code/MLIC/checkpoints/mlicpp_mse_q5_2960000.pth.tar"  #"/Odyssey/private/o23gauvr/code/FASCINATION/outputs/remote/outputs/eusipco/AE" "/Odyssey/private/o23gauvr/code/MLIC/checkpoints/mlicpp_mse_q5_2960000.pth.tar" #"/Odyssey/private/o23gauvr/code/MLIC/experiments/article_long" #, # # # Will rglob for *.tar
         dm_path='/Odyssey/private/o23gauvr/code/FASCINATION/pickle/enatl_natl_dm_157_196_256_norm_per_split_filtered_z_uniform_alternate_days_7_60_10.pkl',  #
         data_dict_metrics=[], #'RMSE', 'PEARSON', 'ECS', 'EXTREMUM_POS_ERROR', 'F1_SCORE', 'DTW', 'LSD', 'MS_SSIM'
-        time_sample=1,
+        time_sample=2,
+        metrics_to_compute=None,
+        metrics_grad_to_compute=['RMSE','MAE'],
+        max_depth=None,
+        batch_size=16,
         compute_pca=False,
-        norm_stats="train",
+        norm_stats=norm_stats,
         verbose=True,
-        unique_name=False
+        unique_name=False,
+        ramgeo_profile_number=20,
     )
 
     out_dir = Path('/Odyssey/private/o23gauvr/code/FASCINATION/pickle')
     out_dir.mkdir(parents=True, exist_ok=True)
-    with open(out_dir / 'model_metrics_mean_std_along_depth_complex_loss.pkl', 'wb') as f:
+    with open(out_dir / f'model_metrics_compare_test_along_depth_{norm_stats}.pkl', 'wb') as f:
         pickle.dump(results, f)
-    with open(out_dir / 'data_dict_mean_std_along_depth_complex_loss.pkl', 'wb') as f:
+    with open(out_dir / f'data_dict_compare_test_along_depth_{norm_stats}.pkl', 'wb') as f:
         pickle.dump(data_dict, f)
+
     print(f'Saved model_metrics and data_dict to {out_dir}')
